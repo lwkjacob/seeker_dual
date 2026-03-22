@@ -15,6 +15,7 @@ client_scripts {
     'client/utils.lua',
     'client/player.lua',
     'client/radar.lua',
+    'client/exports.lua',
 }
 
 ui_page 'nui/index.html'
