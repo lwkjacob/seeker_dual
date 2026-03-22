@@ -239,4 +239,8 @@ Common values you may want to adjust:
 
 ## License / Usage Note
 
+This project is licensed under the MIT License. See `LICENSE` for full text.
+
 If you redistribute modified versions, keep credits to the original inspirations and contributors listed above.
+
+Third-party assets, references, or components (if any) remain under their respective licenses and ownership.
