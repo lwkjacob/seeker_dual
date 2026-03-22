@@ -10,13 +10,6 @@ Config.keybindLockRear = 'NUMPAD2'
 -- Speed unit: 'mph' or 'kmh'
 Config.speedUnit = 'mph'
 
--- Fast lock threshold (mph or kmh depending on unit)
-Config.fastThreshold = 50
-
--- Margin for fast display/lock: target at threshold+margin or above shows in FAST display
--- (e.g. thresh=20, margin=3 → shows 23, 24, 25, 26...). Auto-lock triggers when exceeded (if fast lock on)
-Config.fastLockMargin = 3
-
 -- Maximum detection distance for antennas (game units)
 Config.antennaMaxDist = 350.0
 

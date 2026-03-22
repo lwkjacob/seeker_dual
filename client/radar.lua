@@ -18,7 +18,6 @@ Radar = {
     frontLockedDir = nil,  -- 'front' or 'rear' for arrow
     rearLockedDir = nil,
     fastLockOn = false,
-    fastThreshold = Config.fastThreshold,
     speedUnit = Config.speedUnit,
     -- STALKER DUAL controller functions
     stationaryMode = false,      -- MOV STA: moving vs stationary
@@ -217,7 +216,6 @@ local function loadSettings()
             Radar.power = false
             Radar.displayed = false
             Radar.fastLockOn = data.fastLockOn or false
-            Radar.fastThreshold = data.fastThreshold or Config.fastThreshold
             Radar.speedUnit = data.speedUnit or Config.speedUnit
             Radar.frontXmit = data.frontXmit or false
             Radar.rearXmit = data.rearXmit or false
@@ -239,7 +237,6 @@ end
 local function saveSettings()
     local data = {
         fastLockOn = Radar.fastLockOn,
-        fastThreshold = Radar.fastThreshold,
         speedUnit = Radar.speedUnit,
         frontXmit = Radar.frontXmit,
         rearXmit = Radar.rearXmit,
@@ -348,23 +345,8 @@ local function sendToNUI()
                     targetFront = Utils.FormatSpeed(Utils.ConvertSpeed(best.speed, Radar.speedUnit))
                     frontTargetFrontArrow = (dir == 'front')
                     frontTargetRearArrow = (dir == 'rear')
-
-                    -- Fast display: show when target is at threshold+margin or above (e.g. 23+ when thresh=20, margin=3)
-                    local speedUnit = Utils.ConvertSpeed(best.speed, Radar.speedUnit)
-                    local thresh = Radar.fastThreshold
-                    local margin = Config.fastLockMargin
-                    if speedUnit >= thresh + margin then
-                        fastValue = Utils.FormatSpeed(speedUnit)
-                    end
-                    if Radar.fastLockOn and speedUnit >= thresh + margin then
-                        Radar.frontLocked = true
-                        Radar.frontLockedSpeed = best.speed
-                        Radar.frontLockedDir = dir
-                        lock = true
-                        lockFrontArrow = (dir == 'front')
-                        lockRearArrow = (dir == 'rear')
-                        SendNUIMessage({ _type = 'audio', name = 'beep', vol = Radar.beepVolume or 1.0 })
-                        playVoiceEnunciator('front', dir)
+                    if Radar.fastLockOn then
+                        fastValue = Utils.FormatSpeed(Utils.ConvertSpeed(best.speed, Radar.speedUnit))
                     end
                 end
             end
@@ -398,24 +380,8 @@ local function sendToNUI()
                     targetRear = Utils.FormatSpeed(Utils.ConvertSpeed(best.speed, Radar.speedUnit))
                     rearTargetFrontArrow = (dir == 'front')
                     rearTargetRearArrow = (dir == 'rear')
-
-                    local speedUnit = Utils.ConvertSpeed(best.speed, Radar.speedUnit)
-                    local thresh = Radar.fastThreshold
-                    local margin = Config.fastLockMargin
-                    if speedUnit >= thresh + margin and fastValue == Utils.FormatSpeedEmpty() then
-                        fastValue = Utils.FormatSpeed(speedUnit)
-                    end
-                    if Radar.fastLockOn and speedUnit >= thresh + margin then
-                        Radar.rearLocked = true
-                        Radar.rearLockedSpeed = best.speed
-                        Radar.rearLockedDir = dir
-                        lock = true
-                        if not Radar.frontLocked then
-                            lockFrontArrow = (dir == 'front')
-                            lockRearArrow = (dir == 'rear')
-                        end
-                        SendNUIMessage({ _type = 'audio', name = 'beep', vol = Radar.beepVolume or 1.0 })
-                        playVoiceEnunciator('rear', dir)
+                    if Radar.fastLockOn and fastValue == Utils.FormatSpeedEmpty() then
+                        fastValue = Utils.FormatSpeed(Utils.ConvertSpeed(best.speed, Radar.speedUnit))
                     end
                 end
             end
@@ -556,22 +522,6 @@ local function openMenu()
                     Radar.fastLockOn = not Radar.fastLockOn
                     saveSettings()
                     sendToNUI()
-                    openMenu()
-                end,
-            },
-            {
-                title = 'Fast Threshold',
-                description = tostring(Radar.fastThreshold) .. ' ' .. Radar.speedUnit,
-                icon = 'gauge-high',
-                onSelect = function()
-                    local input = lib.inputDialog('Fast Threshold', {
-                        { type = 'number', label = 'Speed', default = Radar.fastThreshold, min = 20, max = 150 },
-                    })
-                    if input and input[1] then
-                        Radar.fastThreshold = math.floor(input[1])
-                        saveSettings()
-                        sendToNUI()
-                    end
                     openMenu()
                 end,
             },

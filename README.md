@@ -103,7 +103,7 @@ Notes:
 
 ### `FAST LOCK`
 - Toggles fast lock mode (`On`/`OFF`).
-- When enabled, fast-threshold matches can auto-lock.
+- Manual behavior only (no numeric auto-lock threshold).
 
 ### `SEN`
 - Cycles radar range (default 100 -> 200 -> 300 -> 400 -> 500 -> repeat).
@@ -205,8 +205,6 @@ Common values you may want to adjust:
 - `Config.keybindLockFront`
 - `Config.keybindLockRear`
 - `Config.speedUnit`
-- `Config.fastThreshold`
-- `Config.fastLockMargin`
 - `Config.antennaRangeMin` / `Config.antennaRangeMax`
 - `Config.patrolSpeedThresholds`
 - `Config.dopplerThresholds`
