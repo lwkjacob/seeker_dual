@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Seeker Dual DSR</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="radar-container" class="radar-container">
+        <div class="radar-inner">
+            <img src="images/seeker_dual_dsr_base.png" alt="Base" class="radar-base" id="radar-base">
+            <img src="images/xmit_on.png" alt="XMIT" class="radar-overlay" id="overlay-xmit">
+            <img src="images/fast_on.png" alt="FAST" class="radar-overlay" id="overlay-fast">
+            <img src="images/front_on.png" alt="FRONT" class="radar-overlay" id="overlay-front">
+            <img src="images/rear_on.png" alt="REAR" class="radar-overlay" id="overlay-rear">
+            <img src="images/same_on.png" alt="SAME" class="radar-overlay" id="overlay-same">
+            <img src="images/lock_on.png" alt="LOCK" class="radar-overlay" id="overlay-lock">
+            <img src="images/lock_front_arrow_on.png" alt="Lock Front" class="radar-overlay" id="overlay-lock-front">
+            <img src="images/lock_rear_arrow_on.png" alt="Lock Rear" class="radar-overlay" id="overlay-lock-rear">
+            <img src="images/target_front_arrow_on.png" alt="Target Front" class="radar-overlay" id="overlay-target-front">
+            <img src="images/target_rear_arrow_on.png" alt="Target Rear" class="radar-overlay" id="overlay-target-rear">
+            <div class="speed-displays">
+                <div class="speed-target digit-container" id="speed-target"></div>
+                <div class="speed-fast digit-container" id="speed-fast"></div>
+                <div class="speed-patrol digit-container" id="speed-patrol"></div>
+            </div>
+        </div>
+        <div class="resize-handle" id="resize-handle"></div>
+        <div id="adjust-hint" class="adjust-hint" style="display: none">Drag to move, scroll to scale. Press ESC when done.</div>
+    </div>
+
+    <!-- Remote Control Overlay -->
+    <div id="remote-overlay" class="remote-overlay">
+        <div class="remote-wrap">
+            <img src="images/seeker_remote.png" alt="Remote" class="remote-img" draggable="false">
+            <!-- Silver buttons (top section) -->
+            <button class="remote-btn" id="btn-lock-rel" data-action="lockRel" title="LOCK/REL">LOCK/REL</button>
+            <button class="remote-btn" id="btn-ant" data-action="ant" title="ANT">ANT</button>
+            <button class="remote-btn" id="btn-xmit" data-action="xmit" title="XMIT/HLD">XMIT</button>
+            <button class="remote-btn" id="btn-mov-sta" data-action="movSta" title="MOV STA">MOV STA</button>
+            <button class="remote-btn" id="btn-same-opp" data-action="sameOpp" title="SAME/OPP">SAME/OPP</button>
+            <!-- Blue buttons (bottom section) -->
+            <button class="remote-btn" id="btn-fast-lock" data-action="fastLock" title="FAST LOCK/REL">FAST LOCK</button>
+            <button class="remote-btn" id="btn-sen" data-action="sen" title="SEN 100">SEN</button>
+            <button class="remote-btn" id="btn-sql" data-action="sql" title="SQL 10">SQL</button>
+            <button class="remote-btn" id="btn-ps" data-action="ps" title="PS 5/20 1">PS</button>
+            <button class="remote-btn" id="btn-self-test" data-action="selfTest" title="SELF TEST">TEST</button>
+            <button class="remote-btn" id="btn-speaker" data-action="speaker" title="SPEAKER">VOL</button>
+            <button class="remote-btn" id="btn-ps-blank" data-action="psBlank" title="PS BLANK">BLANK</button>
+            <button class="remote-btn" id="btn-light" data-action="light" title="LIGHT">LIGHT</button>
+            <button class="remote-btn" id="btn-power" data-action="power" title="POWER">PWR</button>
+            <button id="debug-export" class="debug-export-btn" style="display:none" onclick="exportButtonCSS()">Copy CSS</button>
+            <textarea id="debug-output" class="debug-output" style="display:none" readonly></textarea>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
