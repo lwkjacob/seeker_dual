@@ -18,6 +18,11 @@ client_scripts {
     'client/exports.lua',
 }
 
+server_scripts {
+    'server/sync.lua',
+    'server/exports.lua',
+}
+
 ui_page 'nui/index.html'
 
 files {
@@ -53,5 +58,14 @@ dependencies {
 
 exports {
     'GetRadarState',
+    'GetRadarDetailedState',
     'IsRadarActive',
+    'IsRadarDisplayed',
+    'CanControlRadar',
+    'CanViewRadar',
+}
+
+server_exports {
+    'GetPlayerRadarState',
+    'IsPlayerRadarActive',
 }
