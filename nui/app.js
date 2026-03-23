@@ -36,6 +36,14 @@ const speedTarget = document.getElementById('speed-target');
 const speedFast = document.getElementById('speed-fast');
 const speedPatrol = document.getElementById('speed-patrol');
 const resizeHandle = document.getElementById('resize-handle');
+const radarPowerBtn = document.getElementById('btn-power-radar');
+const plateReader = document.getElementById('plate-reader');
+const plateFrontBg = document.getElementById('plate-front-bg');
+const plateRearBg = document.getElementById('plate-rear-bg');
+const plateFrontText = document.getElementById('plate-front-text');
+const plateRearText = document.getElementById('plate-rear-text');
+const plateFrontLocked = document.getElementById('plate-front-locked');
+const plateRearLocked = document.getElementById('plate-rear-locked');
 
 function initDigitDisplays() {
     [speedTarget, speedFast, speedPatrol].forEach((el, i) => {
@@ -56,6 +64,27 @@ function loadSounds() {
     });
 }
 loadSounds();
+
+function postRemoteAction(action) {
+    if (!action) return;
+    fetch(`https://${GetParentResourceName()}/remoteBtn`, {
+        method: 'POST',
+        body: JSON.stringify({ action }),
+    }).catch(() => {});
+}
+
+if (radarPowerBtn) {
+    radarPowerBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        postRemoteAction('power');
+    });
+}
+
+// Handshake so client can re-send persisted display config after NUI boot.
+fetch(`https://${GetParentResourceName()}/nuiReady`, {
+    method: 'POST',
+    body: '{}',
+}).catch(() => {});
 
 let voiceQueue = [];
 let voicePlaying = false;
@@ -247,6 +276,104 @@ function setOverlay(id, active) {
     }
 }
 
+function clampPlateStyle(style) {
+    let s = Number(style);
+    if (Number.isNaN(s)) s = 0;
+    if (s < 0) s = 0;
+    if (s > 5) s = s % 6;
+    return s;
+}
+
+function getPlateTextColor(style) {
+    // Explicit mapping per plate style.
+    if (style === 1) return '#ffd34a'; // Yellow
+    if (style === 2) return '#d3b247'; // Slightly darker yellow
+    return '#111111'; // Plate styles 0,3,4,5 use black
+}
+
+function setPlateTextFit(el, textValue) {
+    if (!el) return;
+    let inner = el.querySelector('.plate-text-inner');
+    if (!inner) {
+        inner = document.createElement('span');
+        inner.className = 'plate-text-inner';
+        el.textContent = '';
+        el.appendChild(inner);
+    }
+
+    const text = (textValue || '--------').toString().slice(0, 8).toUpperCase();
+    inner.textContent = text;
+    inner.style.lineHeight = '1';
+    inner.style.maxWidth = 'none';
+    el.style.fontSize = '';
+
+    let layoutAttempts = 0;
+
+    const fit = () => {
+        layoutAttempts += 1;
+        const cw = el.clientWidth;
+        const ch = el.clientHeight;
+        if ((cw < 12 || ch < 12) && layoutAttempts < 8) {
+            requestAnimationFrame(fit);
+            return;
+        }
+        if (cw < 12 || ch < 12) return;
+
+        const padX = 4;
+        const padY = 2;
+        const maxW = cw - padX * 2;
+        const maxH = ch - padY * 2;
+        const minSize = 8;
+        const maxSize = 28;
+        const len = Math.max(1, text.trim().length);
+        const maxByWidth = Math.floor(maxW / (len * 0.62));
+        const maxHGlyph = Math.max(10, Math.floor(maxH * 0.82));
+        const rawStart = Math.min(maxSize, maxByWidth, maxHGlyph, Math.floor(maxH * 0.68));
+        let size = Math.max(minSize, rawStart);
+        for (; size >= minSize; size -= 1) {
+            inner.style.fontSize = `${size}px`;
+            inner.style.letterSpacing = size > 18 ? '0.38px' : size > 14 ? '0.28px' : size > 11 ? '0.18px' : '0.1px';
+            const w = inner.offsetWidth;
+            const h = inner.offsetHeight;
+            if (w <= maxW && h <= maxHGlyph) break;
+        }
+    };
+
+    fit();
+    requestAnimationFrame(fit);
+}
+
+function updatePlateReader(data) {
+    if (!plateReader) return;
+
+    if (data.plateReaderVisible !== undefined) {
+        plateReader.classList.toggle('visible', !!data.plateReaderVisible || plateAdjustMode);
+    }
+
+    if (data.frontPlateStyle !== undefined && plateFrontBg) {
+        const frontStyle = clampPlateStyle(data.frontPlateStyle);
+        plateFrontBg.src = `images/plates/${frontStyle}.png`;
+        if (plateFrontText) plateFrontText.style.color = getPlateTextColor(frontStyle);
+    }
+    if (data.rearPlateStyle !== undefined && plateRearBg) {
+        const rearStyle = clampPlateStyle(data.rearPlateStyle);
+        plateRearBg.src = `images/plates/${rearStyle}.png`;
+        if (plateRearText) plateRearText.style.color = getPlateTextColor(rearStyle);
+    }
+    if (data.frontPlateText !== undefined && plateFrontText) {
+        setPlateTextFit(plateFrontText, data.frontPlateText);
+    }
+    if (data.rearPlateText !== undefined && plateRearText) {
+        setPlateTextFit(plateRearText, data.rearPlateText);
+    }
+    if (data.frontPlateLocked !== undefined && plateFrontLocked) {
+        plateFrontLocked.classList.toggle('active', !!data.frontPlateLocked);
+    }
+    if (data.rearPlateLocked !== undefined && plateRearLocked) {
+        plateRearLocked.classList.toggle('active', !!data.rearPlateLocked);
+    }
+}
+
 let tempDisplayActive = false;
 
 function updateDisplay(data) {
@@ -294,12 +421,15 @@ function updateDisplay(data) {
         const vol = data.dopplerVolume ?? 1.0;
         updateDoppler(speed, vol);
     }
+    updatePlateReader(data);
 }
 
 let isDragging = false;
 let isResizing = false;
 let dragStartX, dragStartY, startLeft, startTop;
 let resizeStartX, resizeStartY, startWidth, startHeight;
+let isPlateDragging = false;
+let plateDragStartX, plateDragStartY, plateStartLeft, plateStartTop;
 
 function applyPosition(x, y, width, height, scaleVal) {
     if (x !== undefined && y !== undefined) {
@@ -317,6 +447,7 @@ function applyPosition(x, y, width, height, scaleVal) {
 }
 
 let scale = 1.0;
+let plateScale = 1.0;
 
 function savePosition() {
     const rect = container.getBoundingClientRect();
@@ -335,8 +466,50 @@ function savePosition() {
     }).catch(() => {});
 }
 
+function applyPlatePosition(x, y, width, height, scaleVal) {
+    if (!plateReader) return;
+    if (x !== undefined && y !== undefined) {
+        plateReader.style.left = (typeof x === 'number' && x <= 1) ? `${x * 100}%` : `${x}px`;
+        plateReader.style.top = (typeof y === 'number' && y <= 1) ? `${y * 100}%` : `${y}px`;
+        plateReader.style.right = 'auto';
+        plateReader.style.bottom = 'auto';
+    }
+    if (width !== undefined) plateReader.style.width = `${width}px`;
+    if (height !== undefined) plateReader.style.height = `${height}px`;
+    if (scaleVal !== undefined) {
+        plateScale = scaleVal;
+        plateReader.style.transform = `scale(${plateScale})`;
+        plateReader.style.transformOrigin = 'top left';
+    }
+}
+
+function getPlatePositionData() {
+    if (!plateReader) return null;
+    const rect = plateReader.getBoundingClientRect();
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    return {
+        x: rect.left / w,
+        y: rect.top / h,
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+        scale: plateScale,
+    };
+}
+
+function savePlatePosition() {
+    const data = getPlatePositionData();
+    if (!data) return;
+    fetch(`https://${GetParentResourceName()}/savePlateDisplay`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+    }).catch(() => {});
+}
+
 container.addEventListener('mousedown', (e) => {
+    if (!adjustMode) return;
     if (e.target === resizeHandle) return;
+    if (e.target.closest && e.target.closest('#btn-power-radar')) return;
     isDragging = true;
     dragStartX = e.clientX;
     dragStartY = e.clientY;
@@ -346,6 +519,7 @@ container.addEventListener('mousedown', (e) => {
 });
 
 resizeHandle.addEventListener('mousedown', (e) => {
+    if (!adjustMode) return;
     e.preventDefault();
     isResizing = true;
     resizeStartX = e.clientX;
@@ -371,17 +545,30 @@ document.addEventListener('mousemove', (e) => {
         container.style.width = `${newWidth}px`;
         container.style.height = `${newHeight}px`;
     }
+    if (isPlateDragging && plateReader) {
+        const dx = e.clientX - plateDragStartX;
+        const dy = e.clientY - plateDragStartY;
+        plateReader.style.left = `${plateStartLeft + dx}px`;
+        plateReader.style.top = `${plateStartTop + dy}px`;
+        plateReader.style.right = 'auto';
+        plateReader.style.bottom = 'auto';
+    }
 });
 
 document.addEventListener('mouseup', () => {
     if (isDragging || isResizing) {
         savePosition();
     }
+    if (isPlateDragging) {
+        savePlatePosition();
+    }
     isDragging = false;
     isResizing = false;
+    isPlateDragging = false;
 });
 
 container.addEventListener('wheel', (e) => {
+    if (!adjustMode) return;
     e.preventDefault();
     const delta = e.deltaY > 0 ? -0.05 : 0.05;
     scale = Math.max(0.5, Math.min(2, scale + delta));
@@ -390,11 +577,50 @@ container.addEventListener('wheel', (e) => {
 }, { passive: false });
 
 let adjustMode = false;
+let plateAdjustMode = false;
 
 function setAdjustMode(active) {
     adjustMode = active;
+    if (active) plateAdjustMode = false;
     const hint = document.getElementById('adjust-hint');
     if (hint) hint.style.display = active ? 'block' : 'none';
+    if (container) container.classList.toggle('nui-adjusting', !!active);
+}
+
+function setPlateAdjustMode(active) {
+    plateAdjustMode = active;
+    if (active) adjustMode = false;
+    const hint = document.getElementById('adjust-hint');
+    if (hint) hint.style.display = active ? 'block' : 'none';
+    if (plateReader) {
+        plateReader.classList.toggle('adjusting', !!active);
+        if (active) {
+            plateReader.classList.add('visible');
+        }
+    }
+}
+
+if (plateReader) {
+    plateReader.addEventListener('mousedown', (e) => {
+        if (!plateAdjustMode) return;
+        e.preventDefault();
+        isPlateDragging = true;
+        plateDragStartX = e.clientX;
+        plateDragStartY = e.clientY;
+        const rect = plateReader.getBoundingClientRect();
+        plateStartLeft = rect.left;
+        plateStartTop = rect.top;
+    });
+
+    plateReader.addEventListener('wheel', (e) => {
+        if (!plateAdjustMode) return;
+        e.preventDefault();
+        const delta = e.deltaY > 0 ? -0.05 : 0.05;
+        plateScale = Math.max(0.5, Math.min(2, plateScale + delta));
+        plateReader.style.transform = `scale(${plateScale})`;
+        plateReader.style.transformOrigin = 'top left';
+        savePlatePosition();
+    }, { passive: false });
 }
 
 // ===== Remote Control =====
@@ -464,10 +690,7 @@ document.querySelectorAll('.remote-btn').forEach(btn => {
         if (debugMode) { e.preventDefault(); e.stopPropagation(); return; }
         const action = btn.dataset.action;
         if (!action) return;
-        fetch(`https://${GetParentResourceName()}/remoteBtn`, {
-            method: 'POST',
-            body: JSON.stringify({ action }),
-        }).catch(() => {});
+        postRemoteAction(action);
     });
 });
 
@@ -525,6 +748,14 @@ document.addEventListener('keydown', (e) => {
             setAdjustMode(false);
             fetch(`https://${GetParentResourceName()}/exitAdjustMode`, { method: 'POST', body: '{}' }).catch(() => {});
         }
+        if (plateAdjustMode) {
+            const data = getPlatePositionData();
+            setPlateAdjustMode(false);
+            fetch(`https://${GetParentResourceName()}/exitPlateAdjustMode`, {
+                method: 'POST',
+                body: JSON.stringify(data || {}),
+            }).catch(() => {});
+        }
     }
 });
 
@@ -539,6 +770,11 @@ window.addEventListener('message', (event) => {
                 scale = d.scale || 1;
                 applyPosition(d.x, d.y, d.width, d.height, scale);
             }
+            if (data.plateDisplay) {
+                const p = data.plateDisplay;
+                plateScale = p.scale || 1;
+                applyPlatePosition(p.x, p.y, p.width, p.height, plateScale);
+            }
             break;
         case 'update':
             updateDisplay(data);
@@ -552,6 +788,9 @@ window.addEventListener('message', (event) => {
             break;
         case 'adjustMode':
             setAdjustMode(true);
+            break;
+        case 'plateAdjustMode':
+            setPlateAdjustMode(true);
             break;
         case 'audio':
             if (data.name) playSound(data.name, data.vol ?? 1.0);

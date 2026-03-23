@@ -45,10 +45,17 @@ ensure seeker_dual
 - `F7` -> Open/close radar remote (`Config.defaultKeybind`)
 - `NUMPAD8` -> Toggle front lock (`Config.keybindLockFront`)
 - `NUMPAD2` -> Toggle rear lock (`Config.keybindLockRear`)
+- `NUMPAD7` -> Toggle front plate lock alias (`Config.keybindPlateLockFront`)
+- `NUMPAD1` -> Toggle rear plate lock alias (`Config.keybindPlateLockRear`)
+- Optional: power keybind when the remote is closed (`Config.keybindPower`, empty by default — set a key in `shared/config.lua` if you want one)
 
 Commands:
 - `/toggledoppler` -> Toggle Doppler sound on/off
-- `/seeker_move` -> Enter drag/scale mode for radar display (move with mouse, scale with scroll wheel, `ESC` to exit)
+- `/togglepr` -> Toggle plate reader on/off
+- `/seeker_power` -> Toggle radar power on/off (works anytime you can control the radar; use when the remote is closed or you cannot click the radar PWR area)
+- `/seeker_settings` -> Open the **radar settings** menu (ox_lib): power, visibility, fast lock, units, **Adjust Display Position**, reset layout, etc.
+- `/seeker_move` -> Enter drag/scale mode for the **radar** display (move with mouse, scroll to scale, `ESC` to exit)
+- `/prmove` -> Enter drag/scale mode for the **plate reader** (`ESC` to exit; position is saved)
 
 ---
 
@@ -56,12 +63,13 @@ Commands:
 
 1. Enter a valid police-class vehicle (default class `18`).
 2. Press `F7` to open the remote.
-3. Press `PWR` on the remote to power on the radar.
+3. **Power on:** click the **PWR** area on the **radar display** (invisible click target over the artwork), or run **`/seeker_power`** / your optional **`Config.keybindPower`**.
 4. Radar runs a self-test sequence, then begins tracking.
 5. Use remote buttons to control antenna, modes, lock, sensitivity, etc.
-6. Press `PWR` again to power off.
+6. **Power off:** same as step 3 (PWR zone or `/seeker_power` / keybind).
 
 Notes:
+- The remote overlay **does not** include a separate PWR button; power is handled on the radar face plus `/seeker_power`.
 - Radar defaults to powered off on resource/player session start.
 - Doppler defaults off and is controlled by `/toggledoppler`.
 
@@ -136,10 +144,10 @@ Notes:
   - Dim
   - Bright
 
-### `PWR`
-- Powers radar on/off.
+### Power (`PWR` — not on the remote strip)
+- **Not** a labeled button on the remote image; use the **radar face PWR** (click when the remote is open / NUI focused), **`/seeker_power`**, or **`Config.keybindPower`**.
 - Power-on applies operational defaults and runs self-test.
-- Power-off clears lock state and hides radar display.
+- Power-off clears lock state and hides the radar display.
 
 ---
 
@@ -155,6 +163,11 @@ Icons:
 
 Target selection behavior (unlocked):
 - Chooses the fastest currently detected front/rear signal.
+
+### Radar PWR hitbox (NUI)
+
+- The clickable PWR region is an **invisible** overlay on the radar (`#btn-power-radar`, styled in `nui/style.css` as `.radar-power-hit`). It does not draw an extra green ring or text; any green PWR art comes from **`nui/images/seeker_dual_dsr_base.png`** (edit the image if you want different art).
+- To move or resize the hitbox, adjust **`top` / `right` / `width` / `height`** (and `min-width` / `min-height`) on `.radar-power-hit` in `nui/style.css`.
 
 ---
 
@@ -186,10 +199,16 @@ Automatic self-test:
 
 ## UI Move / Scale (Per-Player Persistent)
 
-Use `/seeker_move` to reposition and resize the radar UI:
-- Drag with mouse to move
-- Scroll wheel to scale
-- Press `ESC` to finish
+**Radar display**
+
+- Command: `/seeker_move`, or **`/seeker_settings`** → **Adjust Display Position** (same adjust UI).
+- `F7` opens the **remote** only; use **`/seeker_settings`** for the full settings menu.
+- Drag with mouse to move, scroll wheel to scale, `ESC` to finish.
+- A small **resize handle** in the corner is shown **only** while adjust mode is active (not during normal play).
+
+**Plate reader**
+
+- Command: `/prmove` (same drag/scroll/`ESC` behavior; plate reader is shown if needed).
 
 Position/scale are saved per player via KVP and restored on next session/restart.
 
@@ -202,8 +221,9 @@ Primary config file:
 
 Common values you may want to adjust:
 - `Config.defaultKeybind`
-- `Config.keybindLockFront`
-- `Config.keybindLockRear`
+- `Config.keybindPower` — optional key for **`/seeker_power`** when you prefer not to use the command (empty `''` disables the mapping)
+- `Config.keybindLockFront` / `Config.keybindLockRear`
+- `Config.keybindPlateLockFront` / `Config.keybindPlateLockRear`
 - `Config.speedUnit`
 - `Config.antennaRangeMin` / `Config.antennaRangeMax`
 - `Config.patrolSpeedThresholds`
@@ -232,6 +252,15 @@ Common values you may want to adjust:
 
 ### Remote button alignment needs adjustment
 - Enable `Config.remoteDebug = true` for button hitbox visualization and placement helpers.
+
+### PWR / power does nothing with remote closed
+- Expected: NUI is not focused, so the radar PWR **click** does not register. Use **`/seeker_power`** or set **`Config.keybindPower`**.
+
+### Mouse still feels wrong after closing the remote
+- Restart the resource after updates; ensure no other resource is holding `SetNuiFocus(true, ...)`.
+
+## We offer free support
+- Feel free to join our Discord: https://discord.gg/XHrPvWVHRW and open a ticket for any support needs.
 
 ---
 

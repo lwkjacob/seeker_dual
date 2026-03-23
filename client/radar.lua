@@ -17,6 +17,13 @@ Radar = {
     rearLockedSpeed = nil,
     frontLockedDir = nil,  -- 'front' or 'rear' for arrow
     rearLockedDir = nil,
+    frontLockedPlate = nil,
+    rearLockedPlate = nil,
+    frontLockedPlateStyle = nil,
+    rearLockedPlateStyle = nil,
+    frontPlateLocked = false,
+    rearPlateLocked = false,
+    plateReaderEnabled = true,
     fastLockOn = false,
     speedUnit = Config.speedUnit,
     -- STALKER DUAL controller functions
@@ -33,11 +40,44 @@ Radar = {
     frontTargetDir = nil,
     rearTargetSpeed = nil,
     rearTargetDir = nil,
+    nuiLayoutAdjust = false,  -- true while /seeker_move, /prmove, or menu layout adjust is active
 }
 
 local KVP_DISPLAY = Config.kvpDisplay
+local KVP_PLATE_DISPLAY = Config.kvpPlateDisplay
 local KVP_SETTINGS = Config.kvpSettings
 local MAX_DIST = Config.antennaMaxDist
+
+--- Remote open state (declared early so sendToNUI can sync NUI focus for radar clicks)
+local remoteOpen = false
+local lastNuiFocusKey = nil
+
+--- NUI focus only while remote is open or layout adjust is active — no cursor after closing remote.
+local function forceNuiFocusOff()
+    lastNuiFocusKey = nil
+    if SetNuiFocusKeepInput then SetNuiFocusKeepInput(false) end
+    SetNuiFocus(false, false)
+end
+
+local function syncNuiFocus()
+    local key
+    if remoteOpen then
+        key = 'remote'
+    elseif Radar.nuiLayoutAdjust then
+        key = 'layout'
+    else
+        key = 'off'
+    end
+    if key == lastNuiFocusKey then return end
+    lastNuiFocusKey = key
+    if key == 'off' then
+        if SetNuiFocusKeepInput then SetNuiFocusKeepInput(false) end
+        SetNuiFocus(false, false)
+    else
+        if SetNuiFocusKeepInput then SetNuiFocusKeepInput(false) end
+        SetNuiFocus(true, true)
+    end
+end
 
 -- Ray trace config (simplified from wk_wars2x)
 local RAY_TRACES = {
@@ -229,6 +269,7 @@ local function loadSettings()
             Radar.displayBrightness = data.displayBrightness or 1.0
             Radar.dopplerEnabled = false
             Radar.squelchOverride = data.squelchOverride or false
+            Radar.plateReaderEnabled = data.plateReaderEnabled ~= false
         end
     end
 end
@@ -250,20 +291,23 @@ local function saveSettings()
         displayBrightness = Radar.displayBrightness,
         dopplerEnabled = Radar.dopplerEnabled,
         squelchOverride = Radar.squelchOverride,
+        plateReaderEnabled = Radar.plateReaderEnabled,
     }
     SetResourceKvp(KVP_SETTINGS, json.encode(data))
 end
 
+--- Decode JSON from a KVP key (display / plate layout, etc.)
+local function loadKvpJson(key)
+    local raw = GetResourceKvpString(key)
+    if not raw then return nil end
+    local ok, data = pcall(json.decode, raw)
+    if ok and data then return data end
+    return nil
+end
+
 --- Load display from KVP
 local function loadDisplay()
-    local raw = GetResourceKvpString(KVP_DISPLAY)
-    if raw then
-        local ok, data = pcall(json.decode, raw)
-        if ok and data then
-            return data
-        end
-    end
-    return nil
+    return loadKvpJson(KVP_DISPLAY)
 end
 
 --- Save display to KVP (called from NUI callback)
@@ -271,6 +315,26 @@ local function saveDisplay(data)
     if data and type(data) == 'table' then
         SetResourceKvp(KVP_DISPLAY, json.encode(data))
     end
+end
+
+local function loadPlateDisplay()
+    return loadKvpJson(KVP_PLATE_DISPLAY)
+end
+
+local function savePlateDisplay(data)
+    if data and type(data) == 'table' then
+        SetResourceKvp(KVP_PLATE_DISPLAY, json.encode(data))
+    end
+end
+
+local function sendInitDisplayConfig()
+    local displayData = loadDisplay()
+    local plateDisplayData = loadPlateDisplay()
+    SendNUIMessage({
+        _type = 'init',
+        display = displayData or Config.displayDefaults,
+        plateDisplay = plateDisplayData or Config.plateReaderDefaults,
+    })
 end
 
 --- Play voice enunciator after a lock: FRONT/REAR + CLOSING/AWAY
@@ -282,6 +346,173 @@ local function playVoiceEnunciator(antenna, lockedDir)
         direction = direction,
         vol = Radar.beepVolume or 1.0,
     })
+end
+
+local function getPlateDisplayData(veh)
+    if not veh or veh <= 0 or not DoesEntityExist(veh) then
+        return '--------', 0
+    end
+    local plate = GetVehicleNumberPlateText(veh) or ''
+    plate = plate:gsub('^%s+', ''):gsub('%s+$', '')
+    if plate == '' then plate = '--------' end
+    plate = string.upper(plate)
+
+    local style = GetVehicleNumberPlateTextIndex(veh) or 0
+    if style < 0 then style = 0 end
+    if style > 5 then style = style % 6 end
+    return plate, style
+end
+
+local NOTIFY_POLICE_VEHICLE = 'You must be in a police vehicle to use the radar.'
+
+local function notifyPoliceVehicleError(description)
+    lib.notify({ type = 'error', description = description or NOTIFY_POLICE_VEHICLE })
+end
+
+--- Clear speed/plate lock state (power off, PWR toggle, menu power off, etc.)
+local function clearAllRadarLocks()
+    Radar.frontLocked = false
+    Radar.rearLocked = false
+    Radar.frontLockedSpeed = nil
+    Radar.frontLockedDir = nil
+    Radar.rearLockedSpeed = nil
+    Radar.rearLockedDir = nil
+    Radar.frontLockedPlate = nil
+    Radar.frontLockedPlateStyle = nil
+    Radar.rearLockedPlate = nil
+    Radar.rearLockedPlateStyle = nil
+    Radar.frontPlateLocked = false
+    Radar.rearPlateLocked = false
+end
+
+--- Antenna / UI defaults when powering on (menu + PWR)
+local function applyOperationalDefaultsWhenPoweringOn()
+    Radar.frontXmit = true
+    Radar.rearXmit = true
+    Radar.frontMode = 3
+    Radar.rearMode = 3
+    Radar.stationaryMode = false
+    Radar.fastLockOn = true
+    Radar.antennaRange = 200
+    Radar.patrolSpeedThreshold = 5
+    Radar.beepVolume = 1.0
+    Radar.psBlank = false
+    Radar.squelchOverride = false
+    Radar.frontPlateLocked = false
+    Radar.rearPlateLocked = false
+end
+
+local function clearFrontAntennaLock()
+    Radar.frontLocked = false
+    Radar.frontLockedSpeed = nil
+    Radar.frontLockedDir = nil
+end
+
+local function clearRearAntennaLock()
+    Radar.rearLocked = false
+    Radar.rearLockedSpeed = nil
+    Radar.rearLockedDir = nil
+end
+
+--- Try to lock `which` ('front' | 'rear'); plays beep + voice on success.
+---@return boolean
+local function acquireAntennaLock(which)
+    local plyVeh = Player:GetVehicle()
+    if not plyVeh then return false end
+    local captured = captureVehicles(plyVeh)
+    if which == 'front' then
+        if not (Radar.frontXmit and Radar.frontMode > 0) then return false end
+        local best, dir = getBestForAntenna(captured, 'front', Radar.frontMode, Radar.fastLockOn)
+        if not best then return false end
+        Radar.frontLocked = true
+        Radar.frontLockedSpeed = best.speed
+        Radar.frontLockedDir = dir
+        SendNUIMessage({ _type = 'audio', name = 'beep', vol = Radar.beepVolume or 1.0 })
+        playVoiceEnunciator('front', dir)
+        return true
+    end
+    if which == 'rear' then
+        if not (Radar.rearXmit and Radar.rearMode > 0) then return false end
+        local best, dir = getBestForAntenna(captured, 'rear', Radar.rearMode, Radar.fastLockOn)
+        if not best then return false end
+        Radar.rearLocked = true
+        Radar.rearLockedSpeed = best.speed
+        Radar.rearLockedDir = dir
+        SendNUIMessage({ _type = 'audio', name = 'beep', vol = Radar.beepVolume or 1.0 })
+        playVoiceEnunciator('rear', dir)
+        return true
+    end
+    return false
+end
+
+local function clearFrontPlateLock()
+    Radar.frontPlateLocked = false
+    Radar.frontLockedPlate = nil
+    Radar.frontLockedPlateStyle = nil
+end
+
+local function clearRearPlateLock()
+    Radar.rearPlateLocked = false
+    Radar.rearLockedPlate = nil
+    Radar.rearLockedPlateStyle = nil
+end
+
+--- Snapshot current target plate on `which` antenna ('front' | 'rear').
+local function acquirePlateLockFromAntenna(which)
+    local plyVeh = Player:GetVehicle()
+    if not plyVeh then return false end
+    local captured = captureVehicles(plyVeh)
+    if which == 'front' then
+        local best = getBestForAntenna(captured, 'front', Radar.frontMode, Radar.fastLockOn)
+        if not best then return false end
+        Radar.frontPlateLocked = true
+        Radar.frontLockedPlate, Radar.frontLockedPlateStyle = getPlateDisplayData(best.veh)
+        SendNUIMessage({ _type = 'audio', name = 'beep', vol = Radar.beepVolume or 1.0 })
+        return true
+    end
+    if which == 'rear' then
+        local best = getBestForAntenna(captured, 'rear', Radar.rearMode, Radar.fastLockOn)
+        if not best then return false end
+        Radar.rearPlateLocked = true
+        Radar.rearLockedPlate, Radar.rearLockedPlateStyle = getPlateDisplayData(best.veh)
+        SendNUIMessage({ _type = 'audio', name = 'beep', vol = Radar.beepVolume or 1.0 })
+        return true
+    end
+    return false
+end
+
+--- ANT / menu: same transmit cycle
+local function cycleAntennaTransmit()
+    if Radar.frontXmit and not Radar.rearXmit then
+        Radar.frontXmit = false
+        Radar.rearXmit = true
+    elseif Radar.rearXmit and not Radar.frontXmit then
+        Radar.rearXmit = false
+        Radar.frontXmit = true
+    else
+        Radar.frontXmit = not Radar.frontXmit
+        Radar.rearXmit = not Radar.rearXmit
+    end
+end
+
+local function cyclePatrolSpeedThreshold()
+    local thresh = Config.patrolSpeedThresholds or { 1, 5, 20 }
+    local idx = 1
+    for i, v in ipairs(thresh) do
+        if v == (Radar.patrolSpeedThreshold or 5) then idx = i break end
+    end
+    Radar.patrolSpeedThreshold = thresh[(idx % #thresh) + 1]
+end
+
+--- LIGHT: Normal → Dim → Bright → Normal
+local function cycleDisplayBrightness()
+    if Radar.displayBrightness == 1.0 then
+        Radar.displayBrightness = 0.5
+    elseif Radar.displayBrightness == 0.5 then
+        Radar.displayBrightness = 1.5
+    else
+        Radar.displayBrightness = 1.0
+    end
 end
 
 --- Send full state to NUI
@@ -311,6 +542,8 @@ local function sendToNUI()
     local targetRearArrow = false
     local frontTargetFrontArrow, frontTargetRearArrow = false, false
     local rearTargetFrontArrow, rearTargetRearArrow = false, false
+    local frontLivePlateText, frontLivePlateStyle = '--------', 0
+    local rearLivePlateText, rearLivePlateStyle = '--------', 0
 
     if Player:CanViewRadar() and Radar.power and plyVeh and plyVeh > 0 then
         local plySpeed = GetEntitySpeed(plyVeh)
@@ -329,6 +562,7 @@ local function sendToNUI()
                     targetFront = Utils.FormatSpeed(Utils.ConvertSpeed(best.speed, Radar.speedUnit))
                     frontTargetFrontArrow = (dir == 'front')
                     frontTargetRearArrow = (dir == 'rear')
+                    frontLivePlateText, frontLivePlateStyle = getPlateDisplayData(best.veh)
                     targetFrontArrow = frontTargetFrontArrow
                     targetRearArrow = frontTargetRearArrow
                 end
@@ -345,9 +579,7 @@ local function sendToNUI()
                     targetFront = Utils.FormatSpeed(Utils.ConvertSpeed(best.speed, Radar.speedUnit))
                     frontTargetFrontArrow = (dir == 'front')
                     frontTargetRearArrow = (dir == 'rear')
-                    if Radar.fastLockOn then
-                        fastValue = Utils.FormatSpeed(Utils.ConvertSpeed(best.speed, Radar.speedUnit))
-                    end
+                    frontLivePlateText, frontLivePlateStyle = getPlateDisplayData(best.veh)
                 end
             end
         end
@@ -364,6 +596,7 @@ local function sendToNUI()
                     targetRear = Utils.FormatSpeed(Utils.ConvertSpeed(best.speed, Radar.speedUnit))
                     rearTargetFrontArrow = (dir == 'front')
                     rearTargetRearArrow = (dir == 'rear')
+                    rearLivePlateText, rearLivePlateStyle = getPlateDisplayData(best.veh)
                 end
                 if Radar.fastLockOn then
                     fastValue = Utils.FormatSpeed(Utils.ConvertSpeed(Radar.rearLockedSpeed, Radar.speedUnit))
@@ -380,9 +613,7 @@ local function sendToNUI()
                     targetRear = Utils.FormatSpeed(Utils.ConvertSpeed(best.speed, Radar.speedUnit))
                     rearTargetFrontArrow = (dir == 'front')
                     rearTargetRearArrow = (dir == 'rear')
-                    if Radar.fastLockOn and fastValue == Utils.FormatSpeedEmpty() then
-                        fastValue = Utils.FormatSpeed(Utils.ConvertSpeed(best.speed, Radar.speedUnit))
-                    end
+                    rearLivePlateText, rearLivePlateStyle = getPlateDisplayData(best.veh)
                 end
             end
         end
@@ -422,6 +653,10 @@ local function sendToNUI()
             targetFrontArrow = frontTargetFrontArrow
             targetRearArrow = frontTargetRearArrow
         end
+        -- When unlocked, FAST mirrors final chosen TARGET source for consistency.
+        if Radar.fastLockOn and targetSpeed ~= Utils.FormatSpeedEmpty() then
+            fastValue = targetSpeed
+        end
     end
 
     -- Doppler: send raw speed (mph) for smooth incremental pitch, nil when no target
@@ -452,13 +687,40 @@ local function sendToNUI()
         dopplerThresholds = Config.dopplerThresholds or { 20, 45, 75, 110 },
         dopplerVolume = Radar.beepVolume or 1.0,
         squelchOverride = Radar.squelchOverride or false,
+        plateReaderVisible = Radar.plateReaderEnabled and Radar.displayed and not Radar.hidden and Radar.power,
+        frontPlateText = Radar.frontPlateLocked and (Radar.frontLockedPlate or frontLivePlateText) or frontLivePlateText,
+        rearPlateText = Radar.rearPlateLocked and (Radar.rearLockedPlate or rearLivePlateText) or rearLivePlateText,
+        frontPlateStyle = Radar.frontPlateLocked and (Radar.frontLockedPlateStyle or frontLivePlateStyle) or frontLivePlateStyle,
+        rearPlateStyle = Radar.rearPlateLocked and (Radar.rearLockedPlateStyle or rearLivePlateStyle) or rearLivePlateStyle,
+        frontPlateLocked = Radar.frontPlateLocked or false,
+        rearPlateLocked = Radar.rearPlateLocked or false,
     })
+    syncNuiFocus()
+end
+
+--- Menu: power on does not clear antenna locks (historical behavior).
+local function applyRadarPowerOnFromMenu()
+    Radar.power = true
+    Radar.displayed = true
+    applyOperationalDefaultsWhenPoweringOn()
+    saveSettings()
+    sendToNUI()
+    SendNUIMessage({ _type = 'selfTest', vol = Radar.beepVolume or 1.0 })
+end
+
+local function applyRadarPowerOffFromMenu()
+    Radar.power = false
+    Radar.displayed = false
+    clearAllRadarLocks()
+    saveSettings()
+    SendNUIMessage({ _type = 'audio', name = 'XmitOff', vol = Radar.beepVolume or 1.0 })
+    sendToNUI()
 end
 
 --- Open settings menu
 local function openMenu()
     if not Player:CanControlRadar() then
-        lib.notify({ type = 'error', description = 'You must be in a police vehicle to use the radar.' })
+        notifyPoliceVehicleError()
         return
     end
 
@@ -472,34 +734,10 @@ local function openMenu()
                 icon = 'power-off',
                 onSelect = function()
                     if not Radar.power then
-                        Radar.power = true
-                        Radar.frontXmit = true
-                        Radar.rearXmit = true
-                        Radar.frontMode = 3
-                        Radar.rearMode = 3
-                        Radar.stationaryMode = false
-                        Radar.fastLockOn = true
-                        Radar.antennaRange = 200
-                        Radar.patrolSpeedThreshold = 5
-                        Radar.beepVolume = 1.0
-                        Radar.psBlank = false
-                        Radar.squelchOverride = false
-                        Radar.displayed = true
-                        sendToNUI()
-                        SendNUIMessage({ _type = 'selfTest', vol = Radar.beepVolume or 1.0 })
+                        applyRadarPowerOnFromMenu()
                     else
-                        Radar.power = false
-                        Radar.displayed = false
-                        Radar.frontLocked = false
-                        Radar.rearLocked = false
-                        Radar.frontLockedSpeed = nil
-                        Radar.frontLockedDir = nil
-                        Radar.rearLockedSpeed = nil
-                        Radar.rearLockedDir = nil
-                        SendNUIMessage({ _type = 'audio', name = 'XmitOff', vol = Radar.beepVolume or 1.0 })
+                        applyRadarPowerOffFromMenu()
                     end
-                    saveSettings()
-                    sendToNUI()
                     openMenu()
                 end,
             },
@@ -586,9 +824,7 @@ local function openMenu()
                 title = 'Unlock Front',
                 icon = 'lock-open',
                 onSelect = function()
-                    Radar.frontLocked = false
-                    Radar.frontLockedSpeed = nil
-                    Radar.frontLockedDir = nil
+                    clearFrontAntennaLock()
                     sendToNUI()
                     openMenu()
                 end,
@@ -597,9 +833,7 @@ local function openMenu()
                 title = 'Unlock Rear',
                 icon = 'lock-open',
                 onSelect = function()
-                    Radar.rearLocked = false
-                    Radar.rearLockedSpeed = nil
-                    Radar.rearLockedDir = nil
+                    clearRearAntennaLock()
                     sendToNUI()
                     openMenu()
                 end,
@@ -609,16 +843,7 @@ local function openMenu()
                 description = 'Toggle front/rear',
                 icon = 'arrows-left-right',
                 onSelect = function()
-                    if Radar.frontXmit and not Radar.rearXmit then
-                        Radar.frontXmit = false
-                        Radar.rearXmit = true
-                    elseif Radar.rearXmit and not Radar.frontXmit then
-                        Radar.rearXmit = false
-                        Radar.frontXmit = true
-                    else
-                        Radar.frontXmit = not Radar.frontXmit
-                        Radar.rearXmit = not Radar.frontXmit
-                    end
+                    cycleAntennaTransmit()
                     saveSettings()
                     SendNUIMessage({ _type = 'audio', name = Radar.frontXmit and 'XmitOn' or 'XmitOff', vol = Radar.beepVolume or 1.0 })
                     openMenu()
@@ -654,12 +879,7 @@ local function openMenu()
                 description = tostring(Radar.patrolSpeedThreshold or 5) .. ' ' .. Radar.speedUnit,
                 icon = 'gauge-low',
                 onSelect = function()
-                    local thresh = Config.patrolSpeedThresholds or { 1, 5, 20 }
-                    local idx = 1
-                    for i, v in ipairs(thresh) do
-                        if v == (Radar.patrolSpeedThreshold or 5) then idx = i break end
-                    end
-                    Radar.patrolSpeedThreshold = thresh[(idx % #thresh) + 1]
+                    cyclePatrolSpeedThreshold()
                     saveSettings()
                     sendToNUI()
                     openMenu()
@@ -717,13 +937,7 @@ local function openMenu()
                 description = ({ 'Dim', 'Normal', 'Bright' })[(Radar.displayBrightness == 0.5 and 1) or (Radar.displayBrightness == 1.5 and 3) or 2],
                 icon = 'sun',
                 onSelect = function()
-                    if Radar.displayBrightness == 1.0 then
-                        Radar.displayBrightness = 0.5
-                    elseif Radar.displayBrightness == 0.5 then
-                        Radar.displayBrightness = 1.5
-                    else
-                        Radar.displayBrightness = 1.0
-                    end
+                    cycleDisplayBrightness()
                     saveSettings()
                     sendToNUI()
                     openMenu()
@@ -735,8 +949,11 @@ local function openMenu()
                 icon = 'arrows-up-down-left-right',
                 onSelect = function()
                     lib.hideMenu()
-                    SetNuiFocus(true, true)
-                    SendNUIMessage({ _type = 'adjustMode' })
+                    if not Player:CanControlRadar() then
+                        notifyPoliceVehicleError('You must be in a police vehicle to move the radar display.')
+                        return
+                    end
+                    beginRadarPositionAdjust()
                 end,
             },
             {
@@ -754,25 +971,63 @@ local function openMenu()
     lib.showContext('seeker_dual_menu')
 end
 
---- Remote state
-local remoteOpen = false
-
 local function openRemote()
     if not Player:CanControlRadar() then
-        lib.notify({ type = 'error', description = 'You must be in a police vehicle to use the radar.' })
+        notifyPoliceVehicleError()
         return
     end
     Radar.displayed = true
     remoteOpen = true
-    SetNuiFocus(true, true)
     SendNUIMessage({ _type = 'showRemote', debug = Config.remoteDebug })
     sendToNUI()
 end
 
 local function closeRemote()
     remoteOpen = false
-    SetNuiFocus(false, false)
     SendNUIMessage({ _type = 'hideRemote' })
+    syncNuiFocus()
+end
+
+--- PWR / `/seeker_move`: close remote if open, then radar layout adjust + NUI message.
+local function beginRadarPositionAdjust()
+    Radar.displayed = true
+    if remoteOpen then closeRemote() end
+    Radar.nuiLayoutAdjust = true
+    sendToNUI()
+    SendNUIMessage({ _type = 'adjustMode' })
+end
+
+--- `/prmove`: ensure plate reader on, then plate layout adjust.
+local function beginPlateReaderPositionAdjust()
+    Radar.displayed = true
+    Radar.plateReaderEnabled = true
+    if remoteOpen then closeRemote() end
+    saveSettings()
+    Radar.nuiLayoutAdjust = true
+    sendToNUI()
+    SendNUIMessage({ _type = 'plateAdjustMode' })
+end
+
+--- PWR button path: clears locks, may close remote when powering off.
+local function applySeekerPowerToggle()
+    autoTestTimer = 0
+    if not Radar.power then
+        clearAllRadarLocks()
+        Radar.power = true
+        Radar.displayed = true
+        applyOperationalDefaultsWhenPoweringOn()
+        saveSettings()
+        sendToNUI()
+        SendNUIMessage({ _type = 'selfTest', vol = Radar.beepVolume or 1.0 })
+    else
+        Radar.power = false
+        Radar.displayed = false
+        clearAllRadarLocks()
+        saveSettings()
+        SendNUIMessage({ _type = 'audio', name = 'XmitOff', vol = Radar.beepVolume or 1.0 })
+        sendToNUI()
+        closeRemote()
+    end
 end
 
 --- Register keybinds
@@ -785,6 +1040,11 @@ RegisterCommand('seeker_dual_menu', function()
 end, false)
 RegisterKeyMapping('seeker_dual_menu', 'Open Radar Remote', 'keyboard', Config.defaultKeybind)
 
+--- Settings menu (ox_lib): power, display options, Adjust Display Position, reset layout, etc.
+RegisterCommand('seeker_settings', function()
+    openMenu()
+end, false)
+
 RegisterCommand('toggledoppler', function()
     Radar.dopplerEnabled = not Radar.dopplerEnabled
     saveSettings()
@@ -792,70 +1052,85 @@ RegisterCommand('toggledoppler', function()
     lib.notify({ type = 'info', description = 'Doppler sound: ' .. (Radar.dopplerEnabled and 'ON' or 'OFF') })
 end, false)
 
+RegisterCommand('togglepr', function()
+    Radar.plateReaderEnabled = not Radar.plateReaderEnabled
+    saveSettings()
+    sendToNUI()
+    lib.notify({ type = 'info', description = 'Plate reader: ' .. (Radar.plateReaderEnabled and 'ON' or 'OFF') })
+end, false)
+
 RegisterCommand('seeker_move', function()
     if not Player:CanControlRadar() then
-        lib.notify({ type = 'error', description = 'You must be in a police vehicle to move the radar display.' })
+        notifyPoliceVehicleError('You must be in a police vehicle to move the radar display.')
         return
     end
-    Radar.displayed = true
-    if remoteOpen then
-        closeRemote()
+    beginRadarPositionAdjust()
+end, false)
+
+RegisterCommand('prmove', function()
+    if not Player:CanControlRadar() then
+        notifyPoliceVehicleError('You must be in a police vehicle to move the plate reader.')
+        return
     end
-    sendToNUI()
-    SetNuiFocus(true, true)
-    SendNUIMessage({ _type = 'adjustMode' })
+    beginPlateReaderPositionAdjust()
+end, false)
+
+RegisterCommand('seeker_dual_lock_front', function()
+    if Player:CanControlRadar() and Radar.power and Radar.frontXmit and Radar.frontMode > 0 then
+        if Radar.frontLocked then
+            clearFrontAntennaLock()
+        else
+            acquireAntennaLock('front')
+        end
+    end
 end, false)
 
 if Config.keybindLockFront and Config.keybindLockFront ~= '' then
-    RegisterCommand('seeker_dual_lock_front', function()
-        if Player:CanControlRadar() and Radar.power and Radar.frontXmit and Radar.frontMode > 0 then
-            if Radar.frontLocked then
-                Radar.frontLocked = false
-                Radar.frontLockedSpeed = nil
-                Radar.frontLockedDir = nil
-            else
-                local plyVeh = Player:GetVehicle()
-                if plyVeh then
-                    local captured = captureVehicles(plyVeh)
-                    local best, dir = getBestForAntenna(captured, 'front', Radar.frontMode, Radar.fastLockOn)
-                    if best then
-                        Radar.frontLocked = true
-                        Radar.frontLockedSpeed = best.speed
-                        Radar.frontLockedDir = dir
-                        SendNUIMessage({ _type = 'audio', name = 'beep', vol = Radar.beepVolume or 1.0 })
-                        playVoiceEnunciator('front', dir)
-                    end
-                end
-            end
-        end
-    end, false)
     RegisterKeyMapping('seeker_dual_lock_front', 'Toggle Lock Front Antenna', 'keyboard', Config.keybindLockFront)
 end
 
-if Config.keybindLockRear and Config.keybindLockRear ~= '' then
-    RegisterCommand('seeker_dual_lock_rear', function()
-        if Player:CanControlRadar() and Radar.power and Radar.rearXmit and Radar.rearMode > 0 then
-            if Radar.rearLocked then
-                Radar.rearLocked = false
-                Radar.rearLockedSpeed = nil
-                Radar.rearLockedDir = nil
-            else
-                local plyVeh = Player:GetVehicle()
-                if plyVeh then
-                    local captured = captureVehicles(plyVeh)
-                    local best, dir = getBestForAntenna(captured, 'rear', Radar.rearMode, Radar.fastLockOn)
-                    if best then
-                        Radar.rearLocked = true
-                        Radar.rearLockedSpeed = best.speed
-                        Radar.rearLockedDir = dir
-                        SendNUIMessage({ _type = 'audio', name = 'beep', vol = Radar.beepVolume or 1.0 })
-                        playVoiceEnunciator('rear', dir)
-                    end
-                end
-            end
+RegisterCommand('seeker_dual_lock_rear', function()
+    if Player:CanControlRadar() and Radar.power and Radar.rearXmit and Radar.rearMode > 0 then
+        if Radar.rearLocked then
+            clearRearAntennaLock()
+        else
+            acquireAntennaLock('rear')
         end
-    end, false)
+    end
+end, false)
+
+if Config.keybindLockRear and Config.keybindLockRear ~= '' then
     RegisterKeyMapping('seeker_dual_lock_rear', 'Toggle Lock Rear Antenna', 'keyboard', Config.keybindLockRear)
+end
+
+RegisterCommand('seeker_dual_plate_lock_front', function()
+    if Player:CanControlRadar() and Radar.power and Radar.frontXmit and Radar.frontMode > 0 then
+        if Radar.frontPlateLocked then
+            clearFrontPlateLock()
+        else
+            acquirePlateLockFromAntenna('front')
+        end
+        sendToNUI()
+    end
+end, false)
+
+RegisterCommand('seeker_dual_plate_lock_rear', function()
+    if Player:CanControlRadar() and Radar.power and Radar.rearXmit and Radar.rearMode > 0 then
+        if Radar.rearPlateLocked then
+            clearRearPlateLock()
+        else
+            acquirePlateLockFromAntenna('rear')
+        end
+        sendToNUI()
+    end
+end, false)
+
+if Config.keybindPlateLockFront and Config.keybindPlateLockFront ~= '' then
+    RegisterKeyMapping('seeker_dual_plate_lock_front', 'Toggle Lock Front Plate', 'keyboard', Config.keybindPlateLockFront)
+end
+
+if Config.keybindPlateLockRear and Config.keybindPlateLockRear ~= '' then
+    RegisterKeyMapping('seeker_dual_plate_lock_rear', 'Toggle Lock Rear Plate', 'keyboard', Config.keybindPlateLockRear)
 end
 
 --- NUI callbacks
@@ -864,8 +1139,28 @@ RegisterNUICallback('saveDisplay', function(data, cb)
     cb('ok')
 end)
 
+RegisterNUICallback('savePlateDisplay', function(data, cb)
+    savePlateDisplay(data)
+    cb('ok')
+end)
+
+RegisterNUICallback('nuiReady', function(_, cb)
+    sendInitDisplayConfig()
+    cb('ok')
+end)
+
 RegisterNUICallback('exitAdjustMode', function(_, cb)
-    SetNuiFocus(false, false)
+    Radar.nuiLayoutAdjust = false
+    syncNuiFocus()
+    cb('ok')
+end)
+
+RegisterNUICallback('exitPlateAdjustMode', function(data, cb)
+    if data and type(data) == 'table' then
+        savePlateDisplay(data)
+    end
+    Radar.nuiLayoutAdjust = false
+    syncNuiFocus()
     cb('ok')
 end)
 
@@ -873,6 +1168,18 @@ RegisterNUICallback('closeRemote', function(_, cb)
     closeRemote()
     cb('ok')
 end)
+
+RegisterCommand('seeker_power', function()
+    if not Player:CanControlRadar() then
+        notifyPoliceVehicleError()
+        return
+    end
+    applySeekerPowerToggle()
+end, false)
+
+if Config.keybindPower and Config.keybindPower ~= '' then
+    RegisterKeyMapping('seeker_power', 'Toggle radar power (PWR)', 'keyboard', Config.keybindPower)
+end
 
 RegisterNUICallback('remoteBtn', function(data, cb)
     local action = data.action
@@ -885,40 +1192,13 @@ RegisterNUICallback('remoteBtn', function(data, cb)
     end
 
     if action == 'lockRel' then
-        -- Toggle lock on whichever antenna is active (front priority)
         if Radar.frontLocked then
-            Radar.frontLocked = false
-            Radar.frontLockedSpeed = nil
-            Radar.frontLockedDir = nil
+            clearFrontAntennaLock()
         elseif Radar.rearLocked then
-            Radar.rearLocked = false
-            Radar.rearLockedSpeed = nil
-            Radar.rearLockedDir = nil
+            clearRearAntennaLock()
         else
-            -- Lock: try front first, then rear
-            local plyVeh = Player:GetVehicle()
-            if plyVeh then
-                local captured = captureVehicles(plyVeh)
-                if Radar.frontXmit and Radar.frontMode > 0 then
-                    local best, dir = getBestForAntenna(captured, 'front', Radar.frontMode, Radar.fastLockOn)
-                    if best then
-                        Radar.frontLocked = true
-                        Radar.frontLockedSpeed = best.speed
-                        Radar.frontLockedDir = dir
-                        SendNUIMessage({ _type = 'audio', name = 'beep', vol = Radar.beepVolume or 1.0 })
-                        playVoiceEnunciator('front', dir)
-                    end
-                end
-                if not Radar.frontLocked and Radar.rearXmit and Radar.rearMode > 0 then
-                    local best, dir = getBestForAntenna(captured, 'rear', Radar.rearMode, Radar.fastLockOn)
-                    if best then
-                        Radar.rearLocked = true
-                        Radar.rearLockedSpeed = best.speed
-                        Radar.rearLockedDir = dir
-                        SendNUIMessage({ _type = 'audio', name = 'beep', vol = Radar.beepVolume or 1.0 })
-                        playVoiceEnunciator('rear', dir)
-                    end
-                end
+            if not acquireAntennaLock('front') then
+                acquireAntennaLock('rear')
             end
         end
         SendNUIMessage({ _type = 'audio', name = 'beep', vol = Radar.beepVolume or 1.0 })
@@ -926,16 +1206,7 @@ RegisterNUICallback('remoteBtn', function(data, cb)
 
     elseif action == 'ant' then
         autoTestTimer = 0
-        if Radar.frontXmit and not Radar.rearXmit then
-            Radar.frontXmit = false
-            Radar.rearXmit = true
-        elseif Radar.rearXmit and not Radar.frontXmit then
-            Radar.frontXmit = true
-            Radar.rearXmit = true
-        else
-            Radar.rearXmit = false
-            Radar.frontXmit = true
-        end
+        cycleAntennaTransmit()
         saveSettings()
         local label = (Radar.frontXmit and Radar.rearXmit) and 'bot' or (Radar.frontXmit and 'Fnt' or 'rEA')
         SendNUIMessage({ _type = 'tempDisplay', target = label, duration = 2000 })
@@ -1003,13 +1274,7 @@ RegisterNUICallback('remoteBtn', function(data, cb)
         sendToNUI()
 
     elseif action == 'ps' then
-        -- Cycle patrol speed threshold: 1 → 5 → 20 → 1
-        local thresh = Config.patrolSpeedThresholds or { 1, 5, 20 }
-        local idx = 1
-        for i, v in ipairs(thresh) do
-            if v == (Radar.patrolSpeedThreshold or 5) then idx = i break end
-        end
-        Radar.patrolSpeedThreshold = thresh[(idx % #thresh) + 1]
+        cyclePatrolSpeedThreshold()
         saveSettings()
         SendNUIMessage({ _type = 'tempDisplay', patrol = string.format('%3d', Radar.patrolSpeedThreshold), duration = 2000 })
         SendNUIMessage({ _type = 'audio', name = 'beep', vol = Radar.beepVolume or 1.0 })
@@ -1038,58 +1303,13 @@ RegisterNUICallback('remoteBtn', function(data, cb)
         sendToNUI()
 
     elseif action == 'light' then
-        -- Cycle brightness: Normal → Dim → Bright → Normal
-        if Radar.displayBrightness == 1.0 then
-            Radar.displayBrightness = 0.5
-        elseif Radar.displayBrightness == 0.5 then
-            Radar.displayBrightness = 1.5
-        else
-            Radar.displayBrightness = 1.0
-        end
+        cycleDisplayBrightness()
         saveSettings()
         SendNUIMessage({ _type = 'audio', name = 'beep', vol = Radar.beepVolume or 1.0 })
         sendToNUI()
 
     elseif action == 'power' then
-        autoTestTimer = 0
-        if not Radar.power then
-            Radar.power = true
-            Radar.frontXmit = true
-            Radar.rearXmit = true
-            Radar.frontMode = 3       -- Both
-            Radar.rearMode = 3        -- Both
-            Radar.stationaryMode = false  -- Moving
-            Radar.fastLockOn = true
-            Radar.antennaRange = 200
-            Radar.patrolSpeedThreshold = 5
-            Radar.beepVolume = 1.0
-            Radar.psBlank = false
-            Radar.squelchOverride = false
-            Radar.frontLocked = false
-            Radar.rearLocked = false
-            Radar.frontLockedSpeed = nil
-            Radar.frontLockedDir = nil
-            Radar.rearLockedSpeed = nil
-            Radar.rearLockedDir = nil
-            Radar.displayed = true
-            saveSettings()
-            sendToNUI()
-            SendNUIMessage({ _type = 'selfTest', vol = Radar.beepVolume or 1.0 })
-        else
-            -- Powering OFF: hide everything, close remote
-            Radar.power = false
-            Radar.displayed = false
-            Radar.frontLocked = false
-            Radar.rearLocked = false
-            Radar.frontLockedSpeed = nil
-            Radar.frontLockedDir = nil
-            Radar.rearLockedSpeed = nil
-            Radar.rearLockedDir = nil
-            saveSettings()
-            SendNUIMessage({ _type = 'audio', name = 'XmitOff', vol = Radar.beepVolume or 1.0 })
-            sendToNUI()
-            closeRemote()
-        end
+        applySeekerPowerToggle()
     end
 
     cb('ok')
@@ -1097,36 +1317,14 @@ end)
 
 RegisterNUICallback('lockFront', function(_, cb)
     if Player:CanControlRadar() and Radar.power and Radar.frontXmit and Radar.frontMode > 0 then
-        local plyVeh = Player:GetVehicle()
-        if plyVeh then
-            local captured = captureVehicles(plyVeh)
-            local best, dir = getBestForAntenna(captured, 'front', Radar.frontMode, Radar.fastLockOn)
-            if best then
-                Radar.frontLocked = true
-                Radar.frontLockedSpeed = best.speed
-                Radar.frontLockedDir = dir
-                SendNUIMessage({ _type = 'audio', name = 'beep', vol = Radar.beepVolume or 1.0 })
-                playVoiceEnunciator('front', dir)
-            end
-        end
+        acquireAntennaLock('front')
     end
     cb('ok')
 end)
 
 RegisterNUICallback('lockRear', function(_, cb)
     if Player:CanControlRadar() and Radar.power and Radar.rearXmit and Radar.rearMode > 0 then
-        local plyVeh = Player:GetVehicle()
-        if plyVeh then
-            local captured = captureVehicles(plyVeh)
-            local best, dir = getBestForAntenna(captured, 'rear', Radar.rearMode, Radar.fastLockOn)
-            if best then
-                Radar.rearLocked = true
-                Radar.rearLockedSpeed = best.speed
-                Radar.rearLockedDir = dir
-                SendNUIMessage({ _type = 'audio', name = 'beep', vol = Radar.beepVolume or 1.0 })
-                playVoiceEnunciator('rear', dir)
-            end
-        end
+        acquireAntennaLock('rear')
     end
     cb('ok')
 end)
@@ -1134,6 +1332,7 @@ end)
 --- Clean up state bags on resource stop
 AddEventHandler('onResourceStop', function(resource)
     if resource == GetCurrentResourceName() then
+        forceNuiFocusOff()
         LocalPlayer.state:set('seekerRadarPower', false, true)
         LocalPlayer.state:set('seekerRadarFrontXmit', false, true)
         LocalPlayer.state:set('seekerRadarRearXmit', false, true)
@@ -1143,11 +1342,7 @@ end)
 --- Init: load settings, send display config, start main loop
 CreateThread(function()
     loadSettings()
-    local displayData = loadDisplay()
-    SendNUIMessage({
-        _type = 'init',
-        display = displayData or Config.displayDefaults,
-    })
+    sendInitDisplayConfig()
     sendToNUI()
 end)
 

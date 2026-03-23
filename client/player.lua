@@ -26,14 +26,14 @@ function Player:IsPassenger()
     return self:VehicleStateValid() and self.inPassengerSeat
 end
 
---- Returns if the player can view the radar (driver or passenger)
-function Player:CanViewRadar()
+--- Returns if the player can control the radar (driver or passenger, valid class)
+function Player:CanControlRadar()
     return self:IsDriver() or self:IsPassenger()
 end
 
---- Returns if the player can control the radar
-function Player:CanControlRadar()
-    return self:IsDriver() or self:IsPassenger()
+--- Returns if the player can view the radar (same eligibility as control for this resource)
+function Player:CanViewRadar()
+    return self:CanControlRadar()
 end
 
 --- Returns the player's vehicle

@@ -23,13 +23,12 @@ local function buildRadarState()
     }
 end
 
-exports('GetRadarState', function()
+local function exportRadarState()
     return buildRadarState()
-end)
+end
 
-exports('GetRadarDetailedState', function()
-    return buildRadarState()
-end)
+exports('GetRadarState', exportRadarState)
+exports('GetRadarDetailedState', exportRadarState)
 
 exports('IsRadarActive', function()
     return Radar.power and (Radar.frontXmit or Radar.rearXmit)

@@ -25,9 +25,26 @@
                 <div class="speed-fast digit-container" id="speed-fast"></div>
                 <div class="speed-patrol digit-container" id="speed-patrol"></div>
             </div>
+            <!-- PWR lives on radar PNG; moves/scales with /seeker_move (not the remote overlay) -->
+            <button type="button" id="btn-power-radar" class="radar-power-hit" data-action="power" title="POWER" aria-label="Power"></button>
         </div>
         <div class="resize-handle" id="resize-handle"></div>
         <div id="adjust-hint" class="adjust-hint" style="display: none">Drag to move, scroll to scale. Press ESC when done.</div>
+    </div>
+
+    <!-- Plate Reader Overlay -->
+    <div id="plate-reader" class="plate-reader">
+        <img src="images/plates/platereader.png" alt="Plate Reader" class="plate-reader-frame">
+        <div class="plate-slot plate-front">
+            <img id="plate-front-bg" src="images/plates/0.png" alt="Front Plate" class="plate-bg">
+            <div id="plate-front-text" class="plate-text plate-text-front"><span class="plate-text-inner">--------</span></div>
+            <div id="plate-front-locked" class="plate-locked">LOCKED</div>
+        </div>
+        <div class="plate-slot plate-rear">
+            <img id="plate-rear-bg" src="images/plates/0.png" alt="Rear Plate" class="plate-bg">
+            <div id="plate-rear-text" class="plate-text plate-text-rear"><span class="plate-text-inner">--------</span></div>
+            <div id="plate-rear-locked" class="plate-locked">LOCKED</div>
+        </div>
     </div>
 
     <!-- Remote Control Overlay -->
@@ -49,7 +66,6 @@
             <button class="remote-btn" id="btn-speaker" data-action="speaker" title="SPEAKER">VOL</button>
             <button class="remote-btn" id="btn-ps-blank" data-action="psBlank" title="PS BLANK">BLANK</button>
             <button class="remote-btn" id="btn-light" data-action="light" title="LIGHT">LIGHT</button>
-            <button class="remote-btn" id="btn-power" data-action="power" title="POWER">PWR</button>
             <button id="debug-export" class="debug-export-btn" style="display:none" onclick="exportButtonCSS()">Copy CSS</button>
             <textarea id="debug-output" class="debug-output" style="display:none" readonly></textarea>
         </div>

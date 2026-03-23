@@ -188,7 +188,9 @@ body {
     pointer-events: none;
 }
 
+/* Only while repositioning radar (/seeker_move); hidden in normal play */
 .resize-handle {
+    display: none;
     position: absolute;
     bottom: -4px;
     right: -4px;
@@ -199,11 +201,173 @@ body {
     border-radius: 2px;
 }
 
+.radar-container.nui-adjusting .resize-handle {
+    display: block;
+}
+
 .resize-handle:hover {
     background: rgba(150, 150, 150, 0.7);
 }
 
+/* Invisible click target over PWR on radar art (no extra ring/text on top of PNG).
+   With NUI unfocused use /seeker_power or Config.keybindPower. */
+.radar-power-hit {
+    position: absolute;
+    top: 28%;
+    right: 1%;
+    width: 18%;
+    height: 42%;
+    min-width: 36px;
+    min-height: 36px;
+    padding: 0;
+    margin: 0;
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+    background: transparent;
+    box-shadow: none;
+    font-size: 0;
+    color: transparent;
+    z-index: 50;
+    pointer-events: auto;
+    outline: none;
+    display: block;
+    text-shadow: none;
+    -webkit-appearance: none;
+    appearance: none;
+}
+
+.radar-power-hit:hover,
+.radar-power-hit:active {
+    background: transparent;
+    border: none;
+    transform: none;
+    box-shadow: none;
+}
+
+/* ===== Plate Reader ===== */
+.plate-reader {
+    position: fixed;
+    top: 2rem;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 278px;
+    height: 101px;
+    display: none;
+    pointer-events: none;
+    z-index: 5000;
+}
+
+.plate-reader.visible {
+    display: block;
+}
+
+.plate-reader.adjusting {
+    pointer-events: auto;
+    cursor: move;
+}
+
+.plate-reader-frame {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.plate-slot {
+    position: absolute;
+    width: 40%;
+    height: 44%;
+    overflow: visible;
+}
+
+.plate-front {
+    left: 9.8%;
+    top: 20.5%;
+}
+
+.plate-rear {
+    right: 9.8%;
+    top: 20.5%;
+}
+
+.plate-bg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    z-index: 0;
+    pointer-events: none;
+}
+
+/*
+ * Plate NUMBER only (overlay). Tall enough band for readable size; still below header art on PNG.
+ */
+.plate-text {
+    position: absolute;
+    left: 5%;
+    right: 5%;
+    top: 43%;
+    bottom: 6%;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    font-family: 'Arial Black', Arial, sans-serif;
+    text-transform: uppercase;
+    text-shadow: 0 0 2px rgba(0, 0, 0, 0.8);
+    font-weight: 800;
+    padding: 0;
+    margin: 0;
+    overflow: hidden;
+    max-width: 100%;
+}
+
+/* Measured for fit — flex parents lie about scrollWidth/scrollHeight (full box, not glyphs) */
+/* Do NOT set max-width here — it caps offsetWidth and breaks JS fit (text draws huge but measures "small") */
+.plate-text .plate-text-inner {
+    display: inline-block;
+    line-height: 1;
+    white-space: nowrap;
+    font-size: 16px;
+    letter-spacing: 0.22px;
+    text-align: center;
+}
+
+.plate-text-front {
+    color: #111111;
+}
+
+.plate-text-rear {
+    color: #111111;
+}
+
+.plate-locked {
+    position: absolute;
+    left: 50%;
+    bottom: -22px;
+    z-index: 2;
+    transform: translateX(-50%);
+    font-family: Arial, sans-serif;
+    font-size: 14px;
+    font-weight: 900;
+    color: #5b1010;
+    letter-spacing: 0.7px;
+    text-transform: uppercase;
+    text-shadow: 0 0 2px rgba(0, 0, 0, 0.85);
+}
+
+.plate-locked.active {
+    color: #e11f1f;
+    text-shadow: 0 0 8px rgba(225, 31, 31, 0.7);
+}
+
 /* ===== Remote Control Overlay ===== */
+/* Full-screen layer must NOT steal clicks — radar PWR / plate reader sit "under" it.
+   Only .remote-wrap (and its buttons) captures pointer events. */
 .remote-overlay {
     display: none;
     position: fixed;
@@ -214,6 +378,7 @@ body {
     z-index: 9999;
     justify-content: center;
     align-items: center;
+    pointer-events: none;
 }
 
 .remote-overlay.active {
@@ -224,6 +389,7 @@ body {
     position: relative;
     width: 280px;
     user-select: none;
+    pointer-events: auto;
 }
 
 .remote-img {
@@ -271,8 +437,6 @@ body {
 #btn-ps-blank    { top: 57.6%; left: 57.6%; width: 8.9%;  height: 5.0%; border-radius: 4px; }
 
 #btn-light       { top: 64.8%; left: 36.9%; width: 25.8%; height: 4.0%; border-radius: 12px; }
-
-#btn-power       { top: 144.5%; left: 361.8%; width: 11.9%; height: 7.0%; border-radius: 50%; }
 
 /* Debug mode: show button hitboxes as red transparent with labels */
 .remote-wrap.debug .remote-btn {
