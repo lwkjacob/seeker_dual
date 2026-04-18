@@ -114,7 +114,7 @@ Config.kvpPlateDisplay = 'seeker_dual_plate_display'
 Config.kvpSettings = 'seeker_dual_settings'
 
 -- CDE CAD ALPR integration
--- apiKey: generate from Admin Panel > FiveM Settings > API Key (fvm_ prefix)
+-- apiKey: generate from Admin Panel → System Integrations → FiveM API Key (fvm_ prefix)
 Config.cdeCad = {
     enabled          = false,
     apiKey           = '',

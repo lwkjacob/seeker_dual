@@ -10,6 +10,7 @@ A FiveM police radar resource modeled after the **STALKER DUAL DSR** — a real-
 - Three speed windows: **TARGET**, **FAST**, and **PATROL**
 - Visual remote control overlay matching real STALKER hardware
 - License plate reader with per-antenna lock snapshots
+- Continuous ALPR system with CDE CAD integration (see [CDE CAD ALPR](#cde-cad-alpr))
 - Continuous Doppler audio (pitch and volume scale smoothly with speed)
 - Physics-based vehicle detection (ray tracing, echo modeling, Gaussian beam pattern)
 - Self-test sequence on power-up
@@ -175,6 +176,48 @@ All settings live in `shared/config.lua`. Common values to adjust:
 | `Config.autoSelfTestInterval` | `false` | Auto self-test interval in seconds; `false` disables |
 | `Config.detectionZoneDebug` | `false` | Always show ray geometry (or use `/seeker_radar_debug`) |
 | `Config.remoteDebug` | `false` | Show remote button hitbox visualization |
+
+---
+
+## CDE CAD ALPR
+
+The ALPR system continuously scans vehicles around the patrol vehicle and queries [CDE CAD](https://cdecad.com) for registration data. It mirrors real 4-camera ALPR hardware — no manual plate lock required.
+
+**Only flagged vehicles trigger a notification.** All-clear plates are silently ignored.
+
+### Alerts
+
+| Flag | Condition |
+|------|-----------|
+| Stolen Vehicle | Vehicle marked stolen in CDE CAD |
+| Impounded Vehicle | Vehicle marked impounded in CDE CAD |
+| Expired Registration | Registration invalid or not active |
+| No Insurance | Insurance missing or marked invalid |
+
+Each alert fires two GTA notifications: plate + vehicle + direction, then owner + statuses + flags. An `alpr_hit.wav` audio cue plays for every alert. The ALPR only runs while the plate reader is enabled (`/togglepr`).
+
+### Setup
+
+1. Generate a FiveM API key from your CDE CAD **Admin Panel → System Integrations → FiveM API Key**.
+2. Set `enabled = true` and paste your key in `shared/config.lua`:
+
+```lua
+Config.cdeCad = {
+    enabled          = true,
+    apiKey           = 'fvm_yourKeyHere',
+    alprRadius       = 25.0,   -- scan radius in meters
+    alprRescanDelay  = 300,    -- seconds before same plate is re-queried
+    alprScanInterval = 200,    -- ms between scan passes
+
+    -- Optional: Discord webhook for flagged hits
+    discordWebhook     = '',
+    discordWebhookName = 'ALPR System',
+}
+```
+
+### Discord Webhook
+
+When `discordWebhook` is set, every flagged ALPR hit posts an embed to your Discord channel. The embed includes plate, direction, vehicle description, owner, and a list of active flags. Embeds are red for stolen/impounded vehicles and yellow for registration/insurance issues. All-clear plates never touch the webhook.
 
 ---
 
