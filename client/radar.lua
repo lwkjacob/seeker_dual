@@ -114,7 +114,7 @@ local function dot2(a, b)
 end
 
 --- Check if sphere at pos intersects line from s to e, return relPos (1=front, -1=rear)
-local function lineHitsSphere(centre, radius, s, e)
+local function lineHitsSphere(centre, radius, s, e, minProj)
     local rs = { x = s.x, y = s.y }
     local re = { x = e.x, y = e.y }
     local c = { x = centre.x, y = centre.y }
@@ -126,9 +126,10 @@ local function lineHitsSphere(centre, radius, s, e)
     local tProj = dot2(rayToCentre, rayNorm)
     local oppLenSqr = dot2(rayToCentre, rayToCentre) - (tProj * tProj)
     local radiusSqr = radius * radius
+    local mp = minProj or 8.0
     if oppLenSqr < radiusSqr then
-        if tProj > 8.0 then return 1 end
-        if tProj < -8.0 then return -1 end
+        if tProj > mp then return 1 end
+        if tProj < -mp then return -1 end
     end
     return 0
 end
@@ -210,14 +211,14 @@ local function isRadarPlyMountedInPatrolVehicle(plyVeh)
 end
 
 --- Shoot ray and check if vehicle is hit
-local function shootRay(plyVeh, veh, startX, endX, endY)
+local function shootRay(plyVeh, veh, startX, endX, endY, includeStationary)
     local pos = GetEntityCoords(veh)
     local plyPos = GetEntityCoords(plyVeh)
     local dist = #(pos - plyPos)
     local maxDist = Radar.antennaRange or Config.antennaMaxDist
     if not DoesEntityExist(veh) or veh == plyVeh or dist >= maxDist then return nil end
     local entSpeed = GetEntitySpeed(veh)
-    if entSpeed < 0.1 then return nil end
+    if not includeStationary and entSpeed < 0.1 then return nil end
     local maxVert = Config.maxTargetVerticalDelta
     if maxVert and maxVert > 0 and math.abs(pos.z - plyPos.z) > maxVert then return nil end
     local pitch = GetEntityPitch(plyVeh)
@@ -226,9 +227,9 @@ local function shootRay(plyVeh, veh, startX, endX, endY)
     local fy = Config.radarRayForwardOffsetM or 0.0
     local s = GetOffsetFromEntityInWorldCoords(plyVeh, startX, fy, 0.0)
     local e = GetOffsetFromEntityInWorldCoords(plyVeh, endX, endY + fy, 0.0)
-    local relPos = lineHitsSphere(pos, radius, s, e)
+    local relPos = lineHitsSphere(pos, radius, s, e, includeStationary and 2.0 or 8.0)
     if relPos == 0 then return nil end
-    if not isVehicleInTraffic(veh, plyVeh, relPos) then return nil end
+    if not includeStationary and not isVehicleInTraffic(veh, plyVeh, relPos) then return nil end
     if not lineOfSightToTargetVehicle(plyVeh, veh, s, pos) then return nil end
     -- Lateral offset from patrol centerline (|local X|); lower = more on boresight (real beam favors main lobe).
     local rel = GetOffsetFromEntityGivenWorldCoords(plyVeh, pos.x, pos.y, pos.z)
@@ -237,7 +238,7 @@ local function shootRay(plyVeh, veh, startX, endX, endY)
 end
 
 --- Capture vehicles for all rays
-local function captureVehicles(plyVeh)
+local function captureVehicles(plyVeh, includeStationary)
     if not isRadarPlyMountedInPatrolVehicle(plyVeh) then return {} end
     local captured = {}
     local vehs = getAllVehicles()
@@ -245,7 +246,7 @@ local function captureVehicles(plyVeh)
     for _, ray in ipairs(RAY_TRACES) do
         local endY = ray.rayType == 'same' and (maxDist * Config.sameSensitivity) or (maxDist * Config.oppSensitivity)
         for _, v in ipairs(vehs) do
-            local hit = shootRay(plyVeh, v, ray.startX, ray.endX, endY)
+            local hit = shootRay(plyVeh, v, ray.startX, ray.endX, endY, includeStationary)
             if hit then
                 hit.rayType = ray.rayType
                 table.insert(captured, hit)
@@ -752,22 +753,33 @@ end
 local function acquirePlateLockFromAntenna(which)
     local plyVeh = Player:GetVehicle()
     if not plyVeh then return false end
-    local captured = captureVehicles(plyVeh)
+    local captured = captureVehicles(plyVeh, true)
     if which == 'front' then
         local lockMode = Radar.fastLockOn and 'fastest' or liveSortModeFromConfig()
         local best = getBestForAntenna(captured, 'front', Radar.frontMode, lockMode)
-        if not best then return false end
+        if best then
+            Radar.frontLockedPlate, Radar.frontLockedPlateStyle = getPlateDisplayData(best.veh)
+        elseif lastFrontPlateText and lastFrontPlateText ~= '--------' then
+            -- Vehicle left beam but plate reader still has it — lock the last seen plate
+            Radar.frontLockedPlate, Radar.frontLockedPlateStyle = lastFrontPlateText, lastFrontPlateStyle
+        else
+            return false
+        end
         Radar.frontPlateLocked = true
-        Radar.frontLockedPlate, Radar.frontLockedPlateStyle = getPlateDisplayData(best.veh)
         SendNUIMessage({ _type = 'audio', name = 'beep', vol = Radar.beepVolume or 1.0 })
         return true
     end
     if which == 'rear' then
         local lockMode = Radar.fastLockOn and 'fastest' or liveSortModeFromConfig()
         local best = getBestForAntenna(captured, 'rear', Radar.rearMode, lockMode)
-        if not best then return false end
+        if best then
+            Radar.rearLockedPlate, Radar.rearLockedPlateStyle = getPlateDisplayData(best.veh)
+        elseif lastRearPlateText and lastRearPlateText ~= '--------' then
+            Radar.rearLockedPlate, Radar.rearLockedPlateStyle = lastRearPlateText, lastRearPlateStyle
+        else
+            return false
+        end
         Radar.rearPlateLocked = true
-        Radar.rearLockedPlate, Radar.rearLockedPlateStyle = getPlateDisplayData(best.veh)
         SendNUIMessage({ _type = 'audio', name = 'beep', vol = Radar.beepVolume or 1.0 })
         return true
     end
@@ -851,7 +863,7 @@ local function sendToNUI()
     if Player:CanViewRadar() and Radar.power and plyVeh and plyVeh > 0 and isRadarPlyMountedInPatrolVehicle(plyVeh) then
         local plySpeed = GetEntitySpeed(plyVeh)
         local inStationaryMode = Radar.stationaryMode and plySpeed > 1.0  -- ~2.2 mph
-        captured = (not inStationaryMode) and captureVehicles(plyVeh) or {}
+        captured = (not inStationaryMode) and captureVehicles(plyVeh, true) or {}
         local liveMode = liveSortModeFromConfig()
 
         -- Front antenna
@@ -860,28 +872,32 @@ local function sendToNUI()
                 -- TARGET: always show live target speed (updating)
                 local best, dir = getBestForAntenna(captured, 'front', Radar.frontMode, liveMode)
                 if best then
-                    frontBestSpeed = best.speed
-                    frontBestMergeScore = mergeScore(best)
-                    targetSpeedMph = Utils.ConvertSpeed(best.speed, 'mph')
-                    targetFront = Utils.FormatSpeed(Utils.ConvertSpeed(best.speed, Radar.speedUnit))
-                    frontTargetFrontArrow = (dir == 'front')
-                    frontTargetRearArrow = (dir == 'rear')
+                    if best.speed >= 0.1 then
+                        frontBestSpeed = best.speed
+                        frontBestMergeScore = mergeScore(best)
+                        targetSpeedMph = Utils.ConvertSpeed(best.speed, 'mph')
+                        targetFront = Utils.FormatSpeed(Utils.ConvertSpeed(best.speed, Radar.speedUnit))
+                        frontTargetFrontArrow = (dir == 'front')
+                        frontTargetRearArrow = (dir == 'rear')
+                        targetFrontArrow = frontTargetFrontArrow
+                        targetRearArrow = frontTargetRearArrow
+                    end
                     frontLivePlateText, frontLivePlateStyle = getPlateDisplayData(best.veh)
                     storeLastFrontPlate(frontLivePlateText, frontLivePlateStyle)
-                    targetFrontArrow = frontTargetFrontArrow
-                    targetRearArrow = frontTargetRearArrow
                 end
                 lockFrontArrow = (Radar.frontLockedDir == 'front')
                 lockRearArrow = (Radar.frontLockedDir == 'rear')
             else
                 local best, dir = getBestForAntenna(captured, 'front', Radar.frontMode, liveMode)
                 if best then
-                    frontBestSpeed = best.speed
-                    frontBestMergeScore = mergeScore(best)
-                    targetSpeedMph = Utils.ConvertSpeed(best.speed, 'mph')
-                    targetFront = Utils.FormatSpeed(Utils.ConvertSpeed(best.speed, Radar.speedUnit))
-                    frontTargetFrontArrow = (dir == 'front')
-                    frontTargetRearArrow = (dir == 'rear')
+                    if best.speed >= 0.1 then
+                        frontBestSpeed = best.speed
+                        frontBestMergeScore = mergeScore(best)
+                        targetSpeedMph = Utils.ConvertSpeed(best.speed, 'mph')
+                        targetFront = Utils.FormatSpeed(Utils.ConvertSpeed(best.speed, Radar.speedUnit))
+                        frontTargetFrontArrow = (dir == 'front')
+                        frontTargetRearArrow = (dir == 'rear')
+                    end
                     frontLivePlateText, frontLivePlateStyle = getPlateDisplayData(best.veh)
                     storeLastFrontPlate(frontLivePlateText, frontLivePlateStyle)
                 end
@@ -894,12 +910,14 @@ local function sendToNUI()
                 -- TARGET: always show live target speed (updating)
                 local best, dir = getBestForAntenna(captured, 'rear', Radar.rearMode, liveMode)
                 if best then
-                    rearBestSpeed = best.speed
-                    rearBestMergeScore = mergeScore(best)
-                    if targetSpeedMph == nil then targetSpeedMph = Utils.ConvertSpeed(best.speed, 'mph') end
-                    targetRear = Utils.FormatSpeed(Utils.ConvertSpeed(best.speed, Radar.speedUnit))
-                    rearTargetFrontArrow = (dir == 'front')
-                    rearTargetRearArrow = (dir == 'rear')
+                    if best.speed >= 0.1 then
+                        rearBestSpeed = best.speed
+                        rearBestMergeScore = mergeScore(best)
+                        if targetSpeedMph == nil then targetSpeedMph = Utils.ConvertSpeed(best.speed, 'mph') end
+                        targetRear = Utils.FormatSpeed(Utils.ConvertSpeed(best.speed, Radar.speedUnit))
+                        rearTargetFrontArrow = (dir == 'front')
+                        rearTargetRearArrow = (dir == 'rear')
+                    end
                     rearLivePlateText, rearLivePlateStyle = getPlateDisplayData(best.veh)
                     storeLastRearPlate(rearLivePlateText, rearLivePlateStyle)
                 end
@@ -910,12 +928,14 @@ local function sendToNUI()
             else
                 local best, dir = getBestForAntenna(captured, 'rear', Radar.rearMode, liveMode)
                 if best then
-                    rearBestSpeed = best.speed
-                    rearBestMergeScore = mergeScore(best)
-                    if targetSpeedMph == nil then targetSpeedMph = Utils.ConvertSpeed(best.speed, 'mph') end
-                    targetRear = Utils.FormatSpeed(Utils.ConvertSpeed(best.speed, Radar.speedUnit))
-                    rearTargetFrontArrow = (dir == 'front')
-                    rearTargetRearArrow = (dir == 'rear')
+                    if best.speed >= 0.1 then
+                        rearBestSpeed = best.speed
+                        rearBestMergeScore = mergeScore(best)
+                        if targetSpeedMph == nil then targetSpeedMph = Utils.ConvertSpeed(best.speed, 'mph') end
+                        targetRear = Utils.FormatSpeed(Utils.ConvertSpeed(best.speed, Radar.speedUnit))
+                        rearTargetFrontArrow = (dir == 'front')
+                        rearTargetRearArrow = (dir == 'rear')
+                    end
                     rearLivePlateText, rearLivePlateStyle = getPlateDisplayData(best.veh)
                     storeLastRearPlate(rearLivePlateText, rearLivePlateStyle)
                 end
@@ -1215,7 +1235,7 @@ local function openMenu()
                 description = 'Test display and beep',
                 icon = 'vial',
                 onSelect = function()
-                    SendNUIMessage({ _type = 'selfTest' })
+                    SendNUIMessage({ _type = 'selfTest', vol = Radar.beepVolume or 1.0 })
                     SendNUIMessage({ _type = 'audio', name = 'beep', vol = Radar.beepVolume or 1.0 })
                     openMenu()
                 end,
@@ -1749,4 +1769,108 @@ CreateThread(function()
             Wait(500)
         end
     end
+end)
+
+-- Continuous ALPR scan: runs independently of plate lock, mirrors real 4-camera ALPR hardware.
+-- Each vehicle within radius is queried once, then ignored until alprRescanDelay expires.
+local alprScanned = {}  -- [plate] = gameTimer ms when last queried
+
+CreateThread(function()
+    while true do
+        local interval = (Config.cdeCad and Config.cdeCad.alprScanInterval) or 2000
+        Wait(interval)
+
+        if not Config.cdeCad or not Config.cdeCad.enabled then goto continue end
+        if not Radar.power then goto continue end
+        if not Radar.plateReaderEnabled then goto continue end
+
+        local plyVeh = Player:GetVehicle()
+        if not plyVeh or not isRadarPlyMountedInPatrolVehicle(plyVeh) then goto continue end
+
+        local plyPos   = GetEntityCoords(plyVeh)
+        local radius   = Config.cdeCad.alprRadius or 50.0
+        local rescanMs = ((Config.cdeCad.alprRescanDelay or 120)) * 1000
+        local now      = GetGameTimer()
+
+        -- Expire old scanned entries to keep the table from growing forever
+        for plate, ts in pairs(alprScanned) do
+            if (now - ts) > rescanMs then alprScanned[plate] = nil end
+        end
+
+        local vehs = getAllVehicles()
+        for _, veh in ipairs(vehs) do
+            if veh == plyVeh or not DoesEntityExist(veh) then goto next end
+
+            local vehPos = GetEntityCoords(veh)
+            if #(vehPos - plyPos) > radius then goto next end
+
+            local plate = GetVehicleNumberPlateText(veh) or ''
+            plate = plate:gsub('%s+', '')
+            if plate == '' or plate == '--------' then goto next end
+
+            if alprScanned[plate] then goto next end
+            alprScanned[plate] = now
+
+            -- Determine quadrant using local-space offset (real ALPR: 4 cameras, ~90° each)
+            local offset = GetOffsetFromEntityGivenWorldCoords(plyVeh, vehPos.x, vehPos.y, vehPos.z)
+            local dirV   = offset.y >= 0 and 'Front' or 'Rear'
+            local dirH   = offset.x >= 0 and 'Right' or 'Left'
+            TriggerServerEvent('seeker_dual:runAlpr', plate, dirV .. ' ' .. dirH)
+
+            ::next::
+        end
+
+        ::continue::
+    end
+end)
+
+RegisterNetEvent('seeker_dual:alprResult', function(result)
+    if not result or result.noRecord then return end
+
+    local regStatus = result.registrationStatus or (result.registration and 'Valid' or 'Invalid')
+    local insValid  = result.insurance and (result.insuranceStatus or ''):lower() ~= 'invalid'
+    local regValid  = result.registration and (regStatus:lower() == 'valid' or regStatus:lower() == 'active')
+
+    -- Only alert on flagged vehicles
+    if not result.stolen and not result.impounded and insValid and regValid then return end
+
+    local parts = {}
+    if result.year  then parts[#parts+1] = tostring(result.year)  end
+    if result.color then parts[#parts+1] = result.color            end
+    if result.make  then parts[#parts+1] = result.make             end
+    if result.model then parts[#parts+1] = result.model            end
+
+    local isSuspect = result.stolen or result.impounded
+    local header = (isSuspect and '~r~' or '~y~') .. 'ALPR - ' .. (result.plate or '?') .. ':~s~'
+
+    local function statusColor(val, status)
+        if val == false then return '~r~' .. (status or 'Invalid') .. '~s~' end
+        local s = (status or ''):lower()
+        return (s == 'valid' or s == 'active' or val == true) and ('~g~' .. (status or 'Valid') .. '~s~') or ('~r~' .. (status or 'Unknown') .. '~s~')
+    end
+
+    -- Notif 1: direction + plate + vehicle
+    local dir = result.direction and ('~c~' .. result.direction .. '~s~') or nil
+    local notif1 = { dir and (header .. '  ' .. dir) or header }
+    if #parts > 0 then notif1[#notif1+1] = table.concat(parts, ' ') end
+    BeginTextCommandThefeedPost('STRING')
+    AddTextComponentSubstringPlayerName(table.concat(notif1, '\n'))
+    EndTextCommandThefeedPostTicker(false, true)
+
+    -- Notif 2: owner + reg/ins + flags
+    local notif2 = {}
+    if result.owner and result.owner ~= '' then
+        notif2[#notif2+1] = '~y~Owner:~s~ ' .. result.owner
+    end
+    notif2[#notif2+1] = 'Reg: ' .. statusColor(result.registration, regStatus)
+    notif2[#notif2+1] = 'Ins: ' .. statusColor(result.insurance, result.insuranceStatus or (insValid and 'Valid' or 'Invalid'))
+    if result.stolen    then notif2[#notif2+1] = '~r~⚠ STOLEN VEHICLE~s~'       end
+    if result.impounded then notif2[#notif2+1] = '~r~⚠ IMPOUNDED VEHICLE~s~'    end
+    if not regValid     then notif2[#notif2+1] = '~r~⚠ EXPIRED REGISTRATION~s~' end
+    if not insValid     then notif2[#notif2+1] = '~r~⚠ NO INSURANCE~s~'         end
+    BeginTextCommandThefeedPost('STRING')
+    AddTextComponentSubstringPlayerName(table.concat(notif2, '\n'))
+    EndTextCommandThefeedPostTicker(false, true)
+
+    SendNUIMessage({ _type = 'audio', name = 'alpr_hit', vol = 1.0 })
 end)

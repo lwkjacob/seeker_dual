@@ -21,6 +21,7 @@ client_scripts {
 server_scripts {
     'server/sync.lua',
     'server/exports.lua',
+    'server/alpr.lua',
 }
 
 escrow_ignore {
@@ -31,6 +32,7 @@ escrow_ignore {
     'client/exports.lua',
     'server/sync.lua',
     'server/exports.lua',
+    'server/alpr.lua',
 }
 
 ui_page 'nui/index.html'
@@ -67,6 +69,7 @@ files {
     'nui/sounds/Front.wav',
     'nui/sounds/Rear.wav',
     'nui/sounds/doppler/0.wav',
+    'nui/sounds/alpr_hit.wav',
 }
 
 dependencies {

@@ -112,3 +112,13 @@ Config.detectionZoneDebug = false
 Config.kvpDisplay = 'seeker_dual_display'
 Config.kvpPlateDisplay = 'seeker_dual_plate_display'
 Config.kvpSettings = 'seeker_dual_settings'
+
+-- CDE CAD ALPR integration
+-- apiKey: generate from Admin Panel > FiveM Settings > API Key (fvm_ prefix)
+Config.cdeCad = {
+    enabled          = true,
+    apiKey           = 'fvm_d6702a2821f94edefd33608fec3ad748685e267b3db98e5960427e0d6dcacd65',
+    alprRadius       = 25.0,  -- meters — effective camera range per quadrant
+    alprRescanDelay  = 300,   -- seconds before the same plate is re-queried
+    alprScanInterval = 200,  -- ms between scan passes
+}

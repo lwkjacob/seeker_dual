@@ -54,13 +54,15 @@ function initDigitDisplays() {
 initDigitDisplays();
 
 const sounds = {};
-const SOUND_NAMES = ['XmitOn', 'XmitOff', 'Beep', 'Away', 'Closing', 'Front', 'Rear'];
+const SOUND_NAMES = ['XmitOn', 'XmitOff', 'Beep', 'Away', 'Closing', 'Front', 'Rear', 'alpr_hit'];
 
 function loadSounds() {
     SOUND_NAMES.forEach(name => {
         const audio = new Audio(`sounds/${name}.wav`);
+        audio.preload = 'auto';
         audio.volume = 1.0;
         sounds[name] = audio;
+        audio.load();
     });
 }
 loadSounds();
@@ -214,11 +216,16 @@ function updateDoppler(speedMph, masterVolume = 1.0) {
 }
 
 function playSound(name, vol = 1.0) {
-    if (sounds[name]) {
-        sounds[name].volume = vol;
-        sounds[name].currentTime = 0;
-        sounds[name].play().catch(() => {});
+    if (!sounds[name]) return;
+    let audio = sounds[name];
+    if (audio.error) {
+        audio = new Audio(`sounds/${name}.wav`);
+        audio.preload = 'auto';
+        sounds[name] = audio;
     }
+    audio.volume = vol;
+    audio.currentTime = 0;
+    audio.play().catch(() => {});
 }
 
 function runSelfTestSequence(vol) {
@@ -272,10 +279,10 @@ function runSelfTestSequence(vol) {
     }, 3300);
 
     setTimeout(() => {
-        // Phase 7: 4-beep happy tone
+        // Phase 7: 4-beep happy tone (capped at 25% so it doesn't blast)
         let beepCount = 0;
         const beepInterval = setInterval(() => {
-            playSound('Beep', vol);
+            playSound('Beep', Math.min(vol * 0.25, 0.25));
             beepCount++;
             if (beepCount >= 4) clearInterval(beepInterval);
         }, 150);
