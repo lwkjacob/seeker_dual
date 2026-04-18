@@ -120,5 +120,9 @@ Config.cdeCad = {
     apiKey           = '',
     alprRadius       = 25.0,  -- meters — effective camera range per quadrant
     alprRescanDelay  = 300,   -- seconds before the same plate is re-queried
-    alprScanInterval = 200,  -- ms between scan passes
+    alprScanInterval = 200,   -- ms between scan passes
+
+    -- Discord webhook for flagged ALPR hits (leave empty to disable)
+    discordWebhook     = '',
+    discordWebhookName = 'ALPR System',
 }
