@@ -62,6 +62,7 @@ ensure seeker_dual
 | `/seeker_move` | Enter drag/scale mode for the radar display |
 | `/prmove` | Enter drag/scale mode for the plate reader |
 | `/seeker_radar_debug` | Toggle world-space ray geometry debug lines |
+| `/alprlog` | Print the last 20 flagged ALPR hits from the current session |
 
 ---
 

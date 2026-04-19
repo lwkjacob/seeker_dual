@@ -1773,7 +1773,22 @@ end)
 
 -- Continuous ALPR scan: runs independently of plate lock, mirrors real 4-camera ALPR hardware.
 -- Each vehicle within radius is queried once, then ignored until alprRescanDelay expires.
-local alprScanned = {}  -- [plate] = gameTimer ms when last queried
+local alprScanned = {}   -- [plate] = gameTimer ms when last queried
+local alprHitLog  = {}   -- session hit log, newest first, max 20
+
+RegisterCommand('alprlog', function()
+    if #alprHitLog == 0 then
+        TriggerEvent('chat:addMessage', { args = { '[ALPR]', 'No hits this session.' } })
+        return
+    end
+    TriggerEvent('chat:addMessage', { args = { '[ALPR]', ('Last %d hit(s):'):format(#alprHitLog) } })
+    for i, entry in ipairs(alprHitLog) do
+        local line = ('[%s] %s  %s  %s'):format(entry.time, entry.plate, entry.direction, entry.vehicle)
+        if entry.owner ~= '' then line = line .. '  Owner: ' .. entry.owner end
+        line = line .. '  !! ' .. entry.flags
+        TriggerEvent('chat:addMessage', { args = { tostring(i), line } })
+    end
+end, false)
 
 CreateThread(function()
     while true do
@@ -1872,5 +1887,24 @@ RegisterNetEvent('seeker_dual:alprResult', function(result)
     AddTextComponentSubstringPlayerName(table.concat(notif2, '\n'))
     EndTextCommandThefeedPostTicker(false, true)
 
-    SendNUIMessage({ _type = 'audio', name = 'alpr_hit', vol = 1.0 })
+    SendNUIMessage({ _type = 'audio', name = 'alpr_hit', vol = Radar.beepVolume or 1.0 })
+
+    -- Store in session log (newest first, cap at 20)
+    local flags = {}
+    if result.stolen    then flags[#flags+1] = 'STOLEN'   end
+    if result.impounded then flags[#flags+1] = 'IMPOUNDED' end
+    if not regValid     then flags[#flags+1] = 'EXPIRED REG' end
+    if not insValid     then flags[#flags+1] = 'NO INS'    end
+    local ms  = GetGameTimer()
+    local s   = math.floor(ms / 1000)
+    local ts  = ('%02d:%02d:%02d'):format(math.floor(s/3600), math.floor((s%3600)/60), s%60)
+    table.insert(alprHitLog, 1, {
+        time      = ts,
+        plate     = result.plate or '?',
+        direction = result.direction or '?',
+        vehicle   = table.concat(parts, ' '),
+        owner     = result.owner or '',
+        flags     = table.concat(flags, ', '),
+    })
+    if #alprHitLog > 20 then alprHitLog[21] = nil end
 end)

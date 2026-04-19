@@ -282,7 +282,7 @@ function runSelfTestSequence(vol) {
         // Phase 7: 4-beep happy tone (capped at 25% so it doesn't blast)
         let beepCount = 0;
         const beepInterval = setInterval(() => {
-            playSound('Beep', Math.min(vol * 0.25, 0.25));
+            playSound('Beep', vol);
             beepCount++;
             if (beepCount >= 4) clearInterval(beepInterval);
         }, 150);
