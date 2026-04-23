@@ -525,7 +525,7 @@ local function loadSettings()
             Radar.psBlank = data.psBlank or false
             Radar.displayBrightness = data.displayBrightness or 1.0
             Radar.dopplerEnabled = data.dopplerEnabled == true
-            Radar.squelchOverride = data.squelchOverride or false
+            Radar.squelchOverride = (Config.squelchEnabled ~= false) and (data.squelchOverride or false) or false
             Radar.plateReaderEnabled = data.plateReaderEnabled ~= false
         end
     end
@@ -1629,6 +1629,10 @@ RegisterNUICallback('remoteBtn', function(data, cb)
         SendNUIMessage({ _type = 'audio', name = 'beep', vol = Radar.beepVolume or 1.0 })
 
     elseif action == 'sql' then
+        if Config.squelchEnabled == false then
+            SendNUIMessage({ _type = 'tempDisplay', target = 'dSb', duration = 2000 })
+            return
+        end
         Radar.squelchOverride = not Radar.squelchOverride
         saveSettings()
         SendNUIMessage({ _type = 'tempDisplay', target = Radar.squelchOverride and ' On' or 'OFF', duration = 2000 })

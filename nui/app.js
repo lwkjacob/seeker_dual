@@ -180,7 +180,10 @@ function updateDoppler(speedMph, masterVolume = 1.0) {
     const hasTarget = speedMph !== null && speedMph !== undefined && speedMph >= 0;
 
     if (!dopplerCtx || !dopplerBuffer) return;
-    if (dopplerCtx.state === 'suspended') dopplerCtx.resume();
+
+    if (hasTarget || squelchOverrideActive) {
+        if (dopplerCtx.state === 'suspended') dopplerCtx.resume();
+    }
 
     if (hasTarget) {
         const { pitch, vol: volMult } = dopplerLinearMap(speedMph);
@@ -450,7 +453,15 @@ function updateDisplay(data) {
     if (data.squelchOverride !== undefined) {
         squelchOverrideActive = !!data.squelchOverride;
     }
-    if (data.dopplerSpeedMph !== undefined || data.dopplerVolume !== undefined) {
+    if (data.power === false) {
+        // Radar powered off — hard-stop all Doppler regardless of squelch state
+        if (dopplerSource) {
+            dopplerSource.stop();
+            dopplerSource.disconnect();
+            dopplerSource = null;
+        }
+        currentDopplerSpeed = null;
+    } else if (data.dopplerSpeedMph !== undefined || data.dopplerVolume !== undefined) {
         const speed = data.dopplerSpeedMph;
         const vol = data.dopplerVolume ?? 1.0;
         updateDoppler(speed, vol);
