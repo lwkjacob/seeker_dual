@@ -18,7 +18,6 @@ local function buildRadarState()
         psBlank = Radar.psBlank,
         displayBrightness = Radar.displayBrightness,
         dopplerEnabled = Radar.dopplerEnabled,
-        squelchOverride = Radar.squelchOverride,
         speedUnit = Radar.speedUnit,
     }
 end

@@ -172,16 +172,12 @@ function playDopplerStart(speedMph, masterVolume) {
     dopplerSource = src;
 }
 
-let squelchOverrideActive = false;
-const SQUELCH_BASELINE_RATE = 0.3 * DOPPLER_PITCH_SCALE;
-const SQUELCH_BASELINE_VOL = 0.08;
-
 function updateDoppler(speedMph, masterVolume = 1.0) {
     const hasTarget = speedMph !== null && speedMph !== undefined && speedMph >= 0;
 
     if (!dopplerCtx || !dopplerBuffer) return;
 
-    if (hasTarget || squelchOverrideActive) {
+    if (hasTarget) {
         if (dopplerCtx.state === 'suspended') dopplerCtx.resume();
     }
 
@@ -198,16 +194,6 @@ function updateDoppler(speedMph, masterVolume = 1.0) {
             dopplerGain.gain.setTargetAtTime(masterVolume * volMult * DOPPLER_GAIN_SCALE, now, DOPPLER_PARAM_SMOOTH_S);
         }
         currentDopplerSpeed = speedMph;
-    } else if (squelchOverrideActive) {
-        if (currentDopplerSpeed === null) {
-            playDopplerStart(0, masterVolume);
-        }
-        if (dopplerSource) {
-            const nowSq = dopplerCtx.currentTime;
-            dopplerSource.playbackRate.setTargetAtTime(SQUELCH_BASELINE_RATE, nowSq, DOPPLER_PARAM_SMOOTH_S);
-            dopplerGain.gain.setTargetAtTime(masterVolume * SQUELCH_BASELINE_VOL * DOPPLER_GAIN_SCALE, nowSq, DOPPLER_PARAM_SMOOTH_S);
-        }
-        currentDopplerSpeed = -1;
     } else {
         if (dopplerSource) {
             dopplerSource.stop();
@@ -450,11 +436,8 @@ function updateDisplay(data) {
     if (data.dopplerVolMaxSpeedMph !== undefined && Number(data.dopplerVolMaxSpeedMph) > 0) {
         dopplerVolMaxSpeedMph = Number(data.dopplerVolMaxSpeedMph);
     }
-    if (data.squelchOverride !== undefined) {
-        squelchOverrideActive = !!data.squelchOverride;
-    }
     if (data.power === false) {
-        // Radar powered off — hard-stop all Doppler regardless of squelch state
+        // Radar powered off — hard-stop all Doppler
         if (dopplerSource) {
             dopplerSource.stop();
             dopplerSource.disconnect();

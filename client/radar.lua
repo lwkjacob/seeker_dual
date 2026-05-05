@@ -35,7 +35,6 @@ Radar = {
     psBlank = false,            -- PS BLANK: blank patrol when locked
     displayBrightness = 1.0,   -- LIGHT: 0.5, 1.0, 1.5
     dopplerEnabled = false,    -- Doppler sound on/off (toggle via /toggledoppler)
-    squelchOverride = false,   -- SQL: false = audio only when target, true = audio always
     -- Current target data (not locked)
     frontTargetSpeed = nil,
     frontTargetDir = nil,
@@ -525,7 +524,6 @@ local function loadSettings()
             Radar.psBlank = data.psBlank or false
             Radar.displayBrightness = data.displayBrightness or 1.0
             Radar.dopplerEnabled = data.dopplerEnabled == true
-            Radar.squelchOverride = (Config.squelchEnabled ~= false) and (data.squelchOverride or false) or false
             Radar.plateReaderEnabled = data.plateReaderEnabled ~= false
         end
     end
@@ -547,7 +545,6 @@ local function saveSettings()
         psBlank = Radar.psBlank,
         displayBrightness = Radar.displayBrightness,
         dopplerEnabled = Radar.dopplerEnabled,
-        squelchOverride = Radar.squelchOverride,
         plateReaderEnabled = Radar.plateReaderEnabled,
     }
     SetResourceKvp(KVP_SETTINGS, json.encode(data))
@@ -675,7 +672,6 @@ local function applyOperationalDefaultsWhenPoweringOn()
     Radar.patrolSpeedThreshold = 5
     Radar.beepVolume = 1.0
     Radar.psBlank = false
-    Radar.squelchOverride = false
     Radar.frontPlateLocked = false
     Radar.rearPlateLocked = false
 end
@@ -1030,7 +1026,6 @@ local function sendToNUI()
         dopplerVolMax = Config.dopplerVolMax,
         dopplerVolMaxSpeedMph = Config.dopplerVolMaxSpeedMph,
         dopplerVolume = Radar.beepVolume or 1.0,
-        squelchOverride = Radar.squelchOverride or false,
         plateReaderVisible = Radar.plateReaderEnabled and Radar.displayed and not Radar.hidden and Radar.power,
         frontPlateText = Radar.frontPlateLocked and (Radar.frontLockedPlate or frontLivePlateText) or frontLivePlateText,
         rearPlateText = Radar.rearPlateLocked and (Radar.rearLockedPlate or rearLivePlateText) or rearLivePlateText,
@@ -1627,17 +1622,6 @@ RegisterNUICallback('remoteBtn', function(data, cb)
         saveSettings()
         SendNUIMessage({ _type = 'tempDisplay', target = string.format('%3d', math.floor(range)), duration = 3000 })
         SendNUIMessage({ _type = 'audio', name = 'beep', vol = Radar.beepVolume or 1.0 })
-
-    elseif action == 'sql' then
-        if Config.squelchEnabled == false then
-            SendNUIMessage({ _type = 'tempDisplay', target = 'dSb', duration = 2000 })
-            return
-        end
-        Radar.squelchOverride = not Radar.squelchOverride
-        saveSettings()
-        SendNUIMessage({ _type = 'tempDisplay', target = Radar.squelchOverride and ' On' or 'OFF', duration = 2000 })
-        SendNUIMessage({ _type = 'audio', name = 'beep', vol = Radar.beepVolume or 1.0 })
-        sendToNUI()
 
     elseif action == 'ps' then
         cyclePatrolSpeedThreshold()

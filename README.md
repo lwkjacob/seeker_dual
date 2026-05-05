@@ -102,9 +102,6 @@ Toggles the FAST window on/off. When on, the FAST window shows the fastest vehic
 ### `SEN`
 Cycles the radar's maximum detection range: **100 → 200 → 300 → 400 → 500** (units configurable via `Config.antennaRangeMin` / `Config.antennaRangeMax`). Current value shown briefly on the TARGET window.
 
-### `SQL`
-Toggles squelch override. **OFF** = Doppler audio only when a valid target exists. **On** = low baseline hum always present, ramps up with target speed.
-
 ### `PS`
 Cycles the patrol speed display threshold (default steps: `1`, `5`, `20` mph). Current value shown briefly.
 

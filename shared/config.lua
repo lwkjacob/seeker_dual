@@ -12,10 +12,6 @@ Config.keybindLockRear = 'NUMPAD2'
 Config.keybindPlateLockFront = 'NUMPAD7'
 Config.keybindPlateLockRear = 'NUMPAD1'
 
--- Set to false to disable the SQL (squelch) button entirely.
--- Prevents the Doppler baseline hum from ever playing without a target.
-Config.squelchEnabled = true
-
 -- Speed unit: 'mph' or 'kmh'
 Config.speedUnit = 'mph'
 
