@@ -11,7 +11,7 @@ A FiveM police radar resource modeled after the **STALKER DUAL DSR** — a real-
 - Visual remote control overlay matching real STALKER hardware
 - License plate reader with per-antenna lock snapshots
 - Continuous ALPR system with CDE CAD integration (see [CDE CAD ALPR](#cde-cad-alpr))
-- Continuous Doppler audio (pitch and volume scale smoothly with speed)
+- Continuous Doppler audio (pitch and volume track target speed minus patrol speed), with an optional stationary-only mode
 - Physics-based vehicle detection (ray tracing, echo modeling, Gaussian beam pattern)
 - Self-test sequence on power-up
 - Persistent per-player layout and settings via KVP
@@ -57,7 +57,7 @@ ensure seeker_dual
 |---------|-------------|
 | `/seeker_settings` | Open the settings menu (power, units, antenna, layout, reset) |
 | `/seeker_power` | Toggle radar power on/off |
-| `/toggledoppler` | Toggle Doppler audio on/off |
+| `/toggledoppler` | Cycle Doppler audio: On → On (Stationary Only) → Off |
 | `/togglepr` | Toggle plate reader visibility |
 | `/seeker_move` | Enter drag/scale mode for the radar display |
 | `/prmove` | Enter drag/scale mode for the plate reader |
@@ -82,16 +82,27 @@ ensure seeker_dual
 ## Remote Buttons
 
 ### `LOCK / REL`
-Acquires or releases a speed lock on the active antenna. Tries front first, then rear. On lock: plays lock tone and voice enunciator (direction + closing/away). When FAST mode is on, the FAST window freezes to a second vehicle if one exists in the beam, or mirrors TARGET if only one vehicle is present.
+Acquires or releases a speed lock on the active antenna. Tries front first, then rear. On lock: plays lock tone and voice enunciator (antenna FRONT/REAR + target motion CLOSING/AWAY; the closing/away word is skipped if the target is pacing you). When FAST mode is on, the FAST window freezes to a second vehicle if one exists in the beam, or mirrors TARGET if only one vehicle is present.
 
 ### `ANT`
-Cycles the active transmit antenna: **Front → Rear → Both**. Feedback beeps: 1 = front, 2 = rear, 3 = both. Temporary display: `Fnt` / `rEA` / `bot`.
+Toggles the active transmit antenna: **Front ↔ Rear**. Exactly one antenna transmits at a time, matching the real unit — there is no "both" position. Feedback beeps: 1 = front, 2 = rear. Temporary display: `Fnt` / `rEA`. Pressing `ANT` also brings XMIT up, so switching antennas never leaves the radar silent.
 
 ### `XMIT`
-Toggles transmit on/off for the active antennas. Antennas must be transmitting to detect targets.
+Toggles transmit on/off for the selected antenna. The antenna choice is remembered while XMIT is off, so switching back on returns to the same antenna. The antenna must be transmitting to detect targets.
 
 ### `MOV STA`
-Toggles moving vs. stationary mode. In stationary mode, detection pauses when the patrol vehicle is moving. Temporary display: `StA` (stationary) / `noV` (moving).
+Cycles the four operating modes: **Moving → Stationary Closing → Stationary Away → Bi-Directional Stationary**.
+
+| Mode | Legend | Behavior |
+|------|--------|----------|
+| **Moving** | `[ ]` | Normal patrol operation — reads targets while you drive. The bracket sits in the patrol window until you have a speed to show, then the speed takes over. |
+| **Stationary Closing** | `SC` | Reports only targets **closing** on you. |
+| **Stationary Away** | `SA` | Reports only targets **moving away**. |
+| **Bi-Directional Stationary** | `S_` | Reports traffic in either direction. |
+
+All legends live in the **patrol window**, and pressing the button flashes the new one there for two seconds. The `S_` bar sits on the bottom segment: stock Segment7Standard draws underscore on the *middle* bar (the same glyph as `-` and `:`), so the bundled `nui/font/Segment7Standard.otf` ships a patched underscore shifted down to the bottom row. Swapping in a stock copy of that font moves the bar back to the middle. The three stationary modes hold their legend the entire time they are selected — they never show a patrol speed, since they require the patrol car parked (detection pauses above ~2.2 mph).
+
+The direction filter uses closing speed, so a target pacing you inside `Config.closingDeadbandMph` has no usable direction and is ignored by `SC` and `SA` — `S_` still reports it. Filtering happens at capture, so TARGET, FAST and the plate reader all see the same filtered set.
 
 ### `SAME / OPP`
 Cycles the lane mode for the selected antenna: **OFF → Same-lane → Opposite-lane → Both**.
@@ -106,7 +117,25 @@ Cycles the radar's maximum detection range: **100 → 200 → 300 → 400 → 50
 Cycles the patrol speed display threshold (default steps: `1`, `5`, `20` mph). Current value shown briefly.
 
 ### `TEST`
-Runs the self-test sequence on demand (full segment lit → test speeds → `PAS` → 4 beeps).
+Runs the self-test sequence on demand. The same sequence runs automatically on power-up, and on
+`Config.autoSelfTestInterval` when `Config.autoSelfTest` is enabled. Pressing `TEST` while a sequence is
+running restarts it. The auto timer counts only while the radar is powered, and resets on power toggle
+and antenna switch.
+
+| Stage | TARGET | FAST | PATROL | Meaning |
+|---|---|---|---|---|
+| Lamp test | `888` | `888` | `888` | Every segment and indicator lit |
+| Battery | `bAt` | `139` | — | Supply voltage, 13.9 V |
+| Temperature | `107` | `°F` | — | Internal temperature, 107 °F |
+| Display check | `10` / `35` / `65` | — | `10` / `35` / `65` | Test speeds stepped through both speed windows |
+| Result | `PAS` | `S` | — | Reads `PASS` across the two windows, then the pass chime |
+
+The whole run takes about 6.3 seconds. Values are fixed — they are a display check, not live telemetry.
+
+The pass sound is `nui/sounds/stupidfuckinghappysound.wav`, played at master volume trimmed by
+`SELF_TEST_PASS_GAIN` (`0.6`). To swap it, drop in a
+new file, point `SELF_TEST_PASS_SOUND` in `nui/app.js` at its name, and add it to `files {}` in
+`fxmanifest.lua` — the manifest lists every NUI asset explicitly, and an undeclared file fails to load silently.
 
 ### `VOL`
 Cycles master beep/audio volume: **25% → 50% → 75% → 100%**.
@@ -129,23 +158,64 @@ Cycles display brightness: **Normal → Dim → Bright**.
 
 **Icons:** `XMIT`, `FRONT`, `REAR`, `SAME`, `FAST`, `LOCK`, directional arrows.
 
-**Doppler audio:** Pitch and volume ramp continuously with target speed — no stepped MPH bands. Controlled by `Config.dopplerPitch*` and `Config.dopplerVol*` in `shared/config.lua`.
+**Directional arrows:** There are two pairs — one beside `TARGET`, one beside `FAST`. Each pair reports how the vehicle *in its own window* is moving along the beam, not which antenna picked it up — the antenna is already shown by the `FRONT` / `REAR` icons. A pair goes dark whenever its window is blank, and the `FAST` pair freezes with the `FAST` reading on lock.
+
+| Arrow | Meaning |
+|-------|---------|
+| **Down** (`rear`) | Vehicle is **closing** — range to the patrol car is shrinking. An oncoming car in opposite mode, or a slower car ahead you are catching in same mode. |
+| **Up** (`front`) | Vehicle is **moving away** — range is growing. A car pulling away ahead of you, or one you have already passed. |
+| *(neither)* | Vehicle is pacing you, so closing speed sits inside the deadband. Tune with `Config.closingDeadbandMph` (default `1.5` mph). |
+
+> The `FAST` pair's element ids and PNG filenames still read `lock_*_arrow` for historical reasons; they no longer follow the antenna lock.
+
+**Doppler audio:** Pitch and volume ramp continuously — no stepped MPH bands. Controlled by `Config.dopplerPitch*` and `Config.dopplerVol*` in `shared/config.lua`.
+
+The tone is driven by the **speed difference** between the target and your patrol car, not the raw displayed speed — so how fast you are going changes the pitch:
+
+| Situation | Difference | Tone |
+|-----------|------------|------|
+| Stopped, target doing 75 | 75 mph | High — same as the displayed speed |
+| Doing 65, target doing 75 | 10 mph | Low |
+| Target pacing you | ~0 mph | Bottoms out at `Config.dopplerPitchMin` / `dopplerVolMin` |
+
+It is plain subtraction, magnitude only: direction doesn't matter, and an oncoming 75 mph car reads the same 10 mph difference as one ahead of you.
+
+The tone follows the **FAST** window whenever it holds a reading, and falls back to **TARGET** otherwise. Since FAST only fills with a vehicle faster than TARGET, this keeps the audio on the car being chased. While an antenna lock is applied the FAST window is frozen, so the tone uses that frozen speed — but patrol speed stays live, so slowing down still raises the pitch.
+
+`/toggledoppler` (or the settings menu entry) cycles three states:
+
+| State | Behavior |
+|-------|----------|
+| **On** | Tone plays whenever there is a target, moving or parked. |
+| **On (Stationary Only)** | Tone plays only while the patrol car is stopped, and cuts out as soon as you roll. Threshold is `Config.dopplerStationaryMaxMph` (default `2.0`), so idle creep doesn't chop the audio. |
+| **Off** | No Doppler tone. |
 
 ---
 
 ## Moving & Scaling the UI
 
-Both the radar display and plate reader support free placement per player. Layout saves automatically via KVP and restores on next session.
+The radar display, plate reader, and remote all support free placement per player. Layout saves
+automatically via KVP and restores on next session.
 
 **While the remote is open:**
 - Drag either panel to reposition
 - Scroll wheel to scale
 - Corner handle on the radar to resize
 
+**The remote itself:**
+- **Double-click the remote body** (anywhere that isn't a button) to start moving it — a dashed
+  outline appears and the buttons go inert so a drag can't trigger a radar action
+- Drag to move, scroll wheel to scale (0.5×–2×)
+- **Double-click again** to finish and save, or press `ESC`
+
+Buttons are excluded from the double-click that *starts* adjust mode, so normal button presses behave
+exactly as before. Once adjusting, a double-click anywhere on the remote exits.
+
 **Via commands:**
 - `/seeker_move` — enter drag/scale/resize mode for the radar (`ESC` to exit and save)
 - `/prmove` — same for the plate reader
 - `/seeker_settings` → **Adjust Display Position** — opens the same adjust UI
+- `/seeker_settings` → **Reset Remote Position** — re-centers the remote at default size
 
 ---
 
@@ -170,8 +240,11 @@ All settings live in `shared/config.lua`. Common values to adjust:
 | `Config.strictShapeTestLos` | `false` | Strict ray LOS test; leave `false` unless tuning ray flags |
 | `Config.fastRequiresFasterThanTarget` | `true` | FAST must be strictly faster than TARGET |
 | `Config.fastMaxDistanceBeyondPrimaryM` | `70.0` | FAST must be within this range of TARGET |
+| `Config.closingDeadbandMph` | `1.5` | Closing speed below this lights neither directional arrow |
+| `Config.dopplerStationaryMaxMph` | `2.0` | Patrol speed counted as "stopped" in Doppler stationary-only mode |
 | `Config.allowedVehicleClasses` | `{18}` | Vehicle classes that can use the radar |
-| `Config.autoSelfTestInterval` | `false` | Auto self-test interval in seconds; `false` disables |
+| `Config.autoSelfTest` | `false` | `true` re-runs the self-test on a timer while powered on |
+| `Config.autoSelfTestInterval` | `600` | Seconds between automatic self-tests (used only when `autoSelfTest` is `true`) |
 | `Config.detectionZoneDebug` | `false` | Always show ray geometry (or use `/seeker_radar_debug`) |
 | `Config.remoteDebug` | `false` | Show remote button hitbox visualization |
 
@@ -251,7 +324,8 @@ exports.seeker_dual:IsPlayerRadarActive(source)   -- true if radar is active
 - If `Config.strictShapeTestLos = true` was set and targets disappeared, revert to `false`.
 
 **No Doppler audio**
-- Doppler is disabled by default. Enable with `/toggledoppler`.
+- Doppler is disabled by default. Cycle it on with `/toggledoppler`.
+- If it plays parked but stops the moment you drive, it is in **On (Stationary Only)** — press `/toggledoppler` again to reach **Off**, or once more for plain **On**.
 - Verify sound files exist in `nui/sounds/`.
 
 **Display position resets**

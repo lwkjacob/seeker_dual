@@ -70,6 +70,7 @@ files {
     'nui/sounds/Rear.wav',
     'nui/sounds/doppler/0.wav',
     'nui/sounds/alpr_hit.wav',
+    'nui/sounds/stupidfuckinghappysound.wav',
 }
 
 dependencies {

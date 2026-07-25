@@ -27,8 +27,10 @@ const overlays = {
     rear: document.getElementById('overlay-rear'),
     same: document.getElementById('overlay-same'),
     lock: document.getElementById('overlay-lock'),
-    lockFrontArrow: document.getElementById('overlay-lock-front'),
-    lockRearArrow: document.getElementById('overlay-lock-rear'),
+    // Arrow pair beside the FAST window. Element ids and PNG names are historical ("lock"):
+    // they used to follow the antenna lock, they now follow the FAST reading.
+    fastFrontArrow: document.getElementById('overlay-lock-front'),
+    fastRearArrow: document.getElementById('overlay-lock-rear'),
     targetFrontArrow: document.getElementById('overlay-target-front'),
     targetRearArrow: document.getElementById('overlay-target-rear'),
 };
@@ -53,8 +55,13 @@ function initDigitDisplays() {
 }
 initDigitDisplays();
 
+/** Self-test pass cue (nui/sounds/<name>.wav). Swap the file or this name to change it. */
+const SELF_TEST_PASS_SOUND = 'stupidfuckinghappysound';
+/** Trim applied on top of master volume. 0.6 ≈ -4.4 dB; lower it further to taste. */
+const SELF_TEST_PASS_GAIN = 0.6;
+
 const sounds = {};
-const SOUND_NAMES = ['XmitOn', 'XmitOff', 'Beep', 'Away', 'Closing', 'Front', 'Rear', 'alpr_hit'];
+const SOUND_NAMES = ['XmitOn', 'XmitOff', 'Beep', 'Away', 'Closing', 'Front', 'Rear', 'alpr_hit', SELF_TEST_PASS_SOUND];
 
 function loadSounds() {
     SOUND_NAMES.forEach(name => {
@@ -143,9 +150,21 @@ function dopplerLinearMap(speedMph) {
     return { pitch, vol };
 }
 
+/** Lazily create the one shared AudioContext (browsers cap how many you may open). */
+function getAudioCtx() {
+    if (!dopplerCtx) {
+        try {
+            dopplerCtx = new (window.AudioContext || window.webkitAudioContext)();
+        } catch (e) {
+            return null;
+        }
+    }
+    return dopplerCtx;
+}
+
 async function loadDopplerSound() {
     try {
-        dopplerCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (!getAudioCtx()) throw new Error('no AudioContext');
         const res = await fetch('sounds/doppler/0.wav');
         const arr = await res.arrayBuffer();
         dopplerBuffer = await dopplerCtx.decodeAudioData(arr);
@@ -212,75 +231,76 @@ function playSound(name, vol = 1.0) {
         audio.preload = 'auto';
         sounds[name] = audio;
     }
-    audio.volume = vol;
+    // Clamped: assigning outside 0..1 throws and would abort the caller mid-sequence.
+    audio.volume = Math.max(0, Math.min(1, vol));
     audio.currentTime = 0;
     audio.play().catch(() => {});
 }
 
+/* Self-test, mirroring the STALKER DUAL power-on sequence. Each step is one screen:
+   `at` is ms from the start of the run, and t/f/p are the literal 3-character
+   contents of the TARGET / FAST / PATROL windows. Values are pre-padded to 3 so the
+   alignment is explicit — "S  " sits at the left of the FAST window so PAS|S reads
+   as one word across the two windows, where the default right-align would strand it. */
+const ST_BLANK = '   ';
+const ST_DEG_F = '\u00B0F '; // U+00B0 renders as the top four segments in Segment7; escaped so a re-save can't mangle it
+const SELF_TEST_STEPS = [
+    { at: 0,    t: '888',   f: '888',    p: '888',   lamps: true },  // lamp test: every segment + indicator
+    { at: 1200, t: ST_BLANK, f: ST_BLANK, p: ST_BLANK, lamps: false },
+    { at: 1450, t: 'bAt',   f: '139',    p: ST_BLANK },              // battery voltage, 13.9 V
+    { at: 2450, t: '107',   f: ST_DEG_F, p: ST_BLANK },              // internal temperature
+    { at: 3450, t: ST_BLANK, f: ST_BLANK, p: ST_BLANK },
+    { at: 3650, t: ' 10',   f: ST_BLANK, p: ' 10' },                 // speed display check
+    { at: 4200, t: ' 35',   f: ST_BLANK, p: ' 35' },
+    { at: 4750, t: ' 65',   f: ST_BLANK, p: ' 65' },
+    { at: 5300, t: 'PAS',   f: 'S  ',    p: ST_BLANK },              // "PASS"
+];
+const SELF_TEST_PASS_SOUND_AT = 5500;
+const SELF_TEST_END_AT = 6300; // holds the PASS screen until the pass sound (0.57s) finishes
+
+let selfTestTimers = [];
+
+function clearSelfTest() {
+    selfTestTimers.forEach(clearTimeout);
+    selfTestTimers = [];
+}
+
 function runSelfTestSequence(vol) {
-    tempDisplayActive = true;
-    clearTimeout(window._selfTestTimer);
+    // Restart cleanly: without this a second TEST press interleaves its screens with
+    // the run already in progress (easy to hit, since power-on fires one too).
+    clearSelfTest();
     clearTimeout(window._tempDisplayTimer);
+    tempDisplayActive = true;
 
     const tW = speedTarget.querySelector('.digit-display');
     const fW = speedFast.querySelector('.digit-display');
     const pW = speedPatrol.querySelector('.digit-display');
 
-    function setAll(t, f, p) {
-        if (tW) updateDigitDisplay(tW, t);
-        if (fW) updateDigitDisplay(fW, f);
-        if (pW) updateDigitDisplay(pW, p);
-    }
-
     function setOverlaysAll(on) {
-        ['xmit','fast','front','rear','same','lock','lockFrontArrow','lockRearArrow','targetFrontArrow','targetRearArrow']
+        ['xmit','fast','front','rear','same','lock','fastFrontArrow','fastRearArrow','targetFrontArrow','targetRearArrow']
             .forEach(k => setOverlay(k, on));
     }
 
-    // Phase 1: All segments lit (888 888 888) + all indicators on
-    setAll('888', '888', '888');
-    setOverlaysAll(true);
+    function showStep(step) {
+        if (tW) updateDigitDisplay(tW, step.t);
+        if (fW) updateDigitDisplay(fW, step.f);
+        if (pW) updateDigitDisplay(pW, step.p);
+        if (step.lamps !== undefined) setOverlaysAll(step.lamps);
+    }
 
-    setTimeout(() => {
-        // Phase 2: Blank briefly
-        setAll('   ', '   ', '   ');
-        setOverlaysAll(false);
-    }, 1200);
+    function after(ms, fn) {
+        selfTestTimers.push(setTimeout(fn, ms));
+    }
 
-    setTimeout(() => {
-        // Phase 3: Test speed 10 in target window
-        setAll(' 10', '   ', '   ');
-    }, 1500);
+    SELF_TEST_STEPS.forEach(step => {
+        if (step.at <= 0) showStep(step); else after(step.at, () => showStep(step));
+    });
 
-    setTimeout(() => {
-        // Phase 4: Test speed 35 in fast window
-        setAll('   ', ' 35', '   ');
-    }, 2100);
+    after(SELF_TEST_PASS_SOUND_AT, () => playSound(SELF_TEST_PASS_SOUND, vol * SELF_TEST_PASS_GAIN));
 
-    setTimeout(() => {
-        // Phase 5: Test speed 65 in patrol window
-        setAll('   ', '   ', ' 65');
-    }, 2700);
-
-    setTimeout(() => {
-        // Phase 6: PASS on all windows
-        setAll('PAS', 'PAS', 'PAS');
-    }, 3300);
-
-    setTimeout(() => {
-        // Phase 7: 4-beep happy tone (capped at 25% so it doesn't blast)
-        let beepCount = 0;
-        const beepInterval = setInterval(() => {
-            playSound('Beep', vol);
-            beepCount++;
-            if (beepCount >= 4) clearInterval(beepInterval);
-        }, 150);
-    }, 3800);
-
-    setTimeout(() => {
-        // Phase 8: Clear and resume normal display
+    after(SELF_TEST_END_AT, () => {
         tempDisplayActive = false;
-    }, 4500);
+    });
 }
 
 function setOverlay(id, active) {
@@ -419,8 +439,8 @@ function updateDisplay(data) {
     if (data.rear !== undefined) setOverlay('rear', data.rear);
     if (data.same !== undefined) setOverlay('same', data.same);
     if (data.lock !== undefined) setOverlay('lock', data.lock);
-    if (data.lockFrontArrow !== undefined) setOverlay('lockFrontArrow', data.lockFrontArrow);
-    if (data.lockRearArrow !== undefined) setOverlay('lockRearArrow', data.lockRearArrow);
+    if (data.fastFrontArrow !== undefined) setOverlay('fastFrontArrow', data.fastFrontArrow);
+    if (data.fastRearArrow !== undefined) setOverlay('fastRearArrow', data.fastRearArrow);
     if (data.targetFrontArrow !== undefined) setOverlay('targetFrontArrow', data.targetFrontArrow);
     if (data.targetRearArrow !== undefined) setOverlay('targetRearArrow', data.targetRearArrow);
     if (data.brightness !== undefined) {
@@ -548,6 +568,95 @@ let adjustMode = false;
 let plateAdjustMode = false;
 let remoteOpen = false;
 const remoteOverlay = document.getElementById('remote-overlay');
+const remoteWrap = document.getElementById('remote-wrap');
+
+let remoteAdjustMode = false;
+let remoteScale = 1.0;
+let isRemoteDragging = false;
+let remoteDragStartX, remoteDragStartY, remoteStartLeft, remoteStartTop;
+
+/* The remote overlay is display:none while closed, so it measures 0x0 and any centring
+   done then would pin it to the top-left corner. Centring is therefore deferred until
+   the remote is actually on screen. */
+let remoteNeedsCenter = false;
+
+/** True only when the remote is laid out and measurable. */
+function remoteIsMeasurable() {
+    return !!remoteWrap && remoteWrap.getBoundingClientRect().width > 0;
+}
+
+/** Centre from the measured flex-centred box, so it lands centred at any resolution
+ *  rather than at a fraction tuned for one aspect ratio. */
+function centerRemote() {
+    if (!remoteWrap) return;
+    // Drop to the un-positioned state so the overlay's flex centring supplies the box.
+    remoteWrap.classList.remove('positioned');
+    remoteWrap.style.left = '';
+    remoteWrap.style.top = '';
+    remoteWrap.style.transform = '';
+
+    const rect = remoteWrap.getBoundingClientRect();
+    if (rect.width === 0) {
+        // Hidden: leave it flex-centred (a correct fallback) and finish when it opens.
+        remoteNeedsCenter = true;
+        return;
+    }
+
+    remoteWrap.classList.add('positioned');
+    // .positioned switches transform-origin to top left, so offset by half the growth
+    // to keep a scaled remote visually centred.
+    remoteWrap.style.left = `${rect.left - (remoteScale - 1) * rect.width / 2}px`;
+    remoteWrap.style.top = `${rect.top - (remoteScale - 1) * rect.height / 2}px`;
+    remoteWrap.style.transform = `scale(${remoteScale})`;
+    remoteNeedsCenter = false;
+}
+
+function applyRemotePosition(x, y, width, scaleVal) {
+    if (!remoteWrap) return;
+    if (width !== undefined) remoteWrap.style.width = `${width}px`;
+    if (scaleVal !== undefined) remoteScale = scaleVal;
+
+    if (typeof x === 'number' && typeof y === 'number') {
+        remoteNeedsCenter = false;
+        remoteWrap.classList.add('positioned');
+        remoteWrap.style.left = x <= 1 ? `${x * 100}%` : `${x}px`;
+        remoteWrap.style.top = y <= 1 ? `${y * 100}%` : `${y}px`;
+        remoteWrap.style.right = 'auto';
+        remoteWrap.style.bottom = 'auto';
+        remoteWrap.style.transform = `scale(${remoteScale})`;
+    } else {
+        centerRemote();
+    }
+}
+
+function saveRemotePosition() {
+    // Never persist a measurement taken while hidden — it would save 0,0.
+    if (!remoteIsMeasurable()) return;
+    const rect = remoteWrap.getBoundingClientRect();
+    const data = {
+        x: rect.left / window.innerWidth,
+        y: rect.top / window.innerHeight,
+        /* offsetWidth = layout box before transform; rect.width includes scale and would
+           compound it on every reload. Height follows the image aspect, so it isn't stored. */
+        width: Math.round(remoteWrap.offsetWidth),
+        scale: remoteScale,
+    };
+    fetch(`https://${GetParentResourceName()}/saveRemoteDisplay`, {
+        method: 'POST',
+        headers: NUI_JSON_HEADERS,
+        body: JSON.stringify(data),
+    }).catch(() => {});
+}
+
+/** save:false is used by the reset path, which must not immediately re-write the KVP it just deleted. */
+function setRemoteAdjustMode(active, { save = true } = {}) {
+    remoteAdjustMode = !!active;
+    if (remoteWrap) remoteWrap.classList.toggle('adjusting', remoteAdjustMode);
+    if (!remoteAdjustMode) {
+        isRemoteDragging = false;
+        if (save) saveRemotePosition();
+    }
+}
 
 /** Radar / plate move+scale: explicit /seeker_move OR while remote overlay is open */
 function canLayoutDragRadar() {
@@ -671,6 +780,55 @@ if (plateReader) {
     }, { passive: false });
 }
 
+if (remoteWrap) {
+    /* Enter on a double-click of the remote body — deliberately not a button, so ordinary
+       presses are untouched. Exit on a double-click anywhere, since .adjusting makes the
+       buttons inert and the event lands on the wrap either way. */
+    remoteWrap.addEventListener('dblclick', (e) => {
+        if (!remoteOpen) return;
+        if (!remoteAdjustMode && e.target.closest && e.target.closest('.remote-btn')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setRemoteAdjustMode(!remoteAdjustMode);
+    });
+
+    remoteWrap.addEventListener('mousedown', (e) => {
+        if (!remoteAdjustMode) return;
+        e.preventDefault();
+        e.stopPropagation();
+        isRemoteDragging = true;
+        remoteDragStartX = e.clientX;
+        remoteDragStartY = e.clientY;
+        const rect = remoteWrap.getBoundingClientRect();
+        remoteStartLeft = rect.left;
+        remoteStartTop = rect.top;
+    });
+
+    remoteWrap.addEventListener('wheel', (e) => {
+        if (!remoteAdjustMode) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const delta = e.deltaY > 0 ? -0.05 : 0.05;
+        remoteScale = Math.max(0.5, Math.min(2, remoteScale + delta));
+        remoteWrap.style.transform = `scale(${remoteScale})`;
+        saveRemotePosition();
+    }, { passive: false });
+}
+
+document.addEventListener('mousemove', (e) => {
+    if (!isRemoteDragging || !remoteWrap) return;
+    remoteWrap.style.left = `${remoteStartLeft + (e.clientX - remoteDragStartX)}px`;
+    remoteWrap.style.top = `${remoteStartTop + (e.clientY - remoteDragStartY)}px`;
+    remoteWrap.style.right = 'auto';
+    remoteWrap.style.bottom = 'auto';
+});
+
+document.addEventListener('mouseup', () => {
+    if (!isRemoteDragging) return;
+    isRemoteDragging = false;
+    saveRemotePosition();
+});
+
 // ===== Remote Control =====
 let debugMode = false;
 let debugDragging = null;
@@ -679,8 +837,12 @@ let debugBtnStartLeft = 0, debugBtnStartTop = 0;
 
 function showRemote(show, debug) {
     remoteOpen = show;
+    // Closing the remote must not leave adjust mode armed for the next time it opens.
+    if (!show && remoteAdjustMode) setRemoteAdjustMode(false);
     debugMode = !!debug;
     if (remoteOverlay) remoteOverlay.classList.toggle('active', show);
+    // Now that it is laid out, finish any centring that was deferred while hidden.
+    if (show && remoteNeedsCenter) centerRemote();
     const wrap = document.querySelector('.remote-wrap');
     if (wrap && debug !== undefined) {
         wrap.classList.toggle('debug', !!debug);
@@ -735,7 +897,7 @@ document.querySelectorAll('.remote-btn').forEach(btn => {
     }, { passive: false });
 
     btn.addEventListener('click', (e) => {
-        if (debugMode) { e.preventDefault(); e.stopPropagation(); return; }
+        if (debugMode || remoteAdjustMode) { e.preventDefault(); e.stopPropagation(); return; }
         const action = btn.dataset.action;
         if (!action) return;
         postRemoteAction(action);
@@ -800,6 +962,9 @@ document.addEventListener('keydown', (e) => {
                 headers: NUI_JSON_HEADERS,
                 body: JSON.stringify(data || {}),
             }).catch(() => {});
+        } else if (remoteAdjustMode) {
+            // Finish repositioning first so ESC doesn't also close the remote.
+            setRemoteAdjustMode(false);
         } else if (remoteOpen) {
             showRemote(false);
             fetch(`https://${GetParentResourceName()}/closeRemote`, { method: 'POST', body: '{}' }).catch(() => {});
@@ -823,6 +988,10 @@ window.addEventListener('message', (event) => {
                 plateScale = p.scale || 1;
                 applyPlatePosition(p.x, p.y, p.width, p.height, plateScale);
             }
+            if (data.remoteDisplay) {
+                const r = data.remoteDisplay;
+                applyRemotePosition(r.x, r.y, r.width, r.scale || 1);
+            }
             break;
         case 'update':
             updateDisplay(data);
@@ -834,6 +1003,12 @@ window.addEventListener('message', (event) => {
                 applyPosition(d.x, d.y, d.width, d.height, scale);
             }
             break;
+        case 'resetRemoteDisplay': {
+            const r = data.remoteDisplay || {};
+            if (remoteAdjustMode) setRemoteAdjustMode(false, { save: false });
+            applyRemotePosition(r.x, r.y, r.width, r.scale || 1);
+            break;
+        }
         case 'adjustMode':
             setAdjustMode(true);
             break;

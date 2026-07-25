@@ -7,15 +7,16 @@ Radar = {
     power = false,
     displayed = false,
     hidden = false,
-    frontXmit = false,
-    rearXmit = false,
+    activeAntenna = 'front',  -- ANT: 'front' | 'rear'. Real DSR transmits on one antenna at a time — never both.
+    frontXmit = false,        -- derived: activeAntenna == 'front' and transmitting
+    rearXmit = false,         -- derived: activeAntenna == 'rear' and transmitting
     frontMode = 0,  -- 0=none, 1=same, 2=opp, 3=both
     rearMode = 0,
     frontLocked = false,
     rearLocked = false,
     frontLockedSpeed = nil,
     rearLockedSpeed = nil,
-    frontLockedDir = nil,  -- 'front' or 'rear' for arrow
+    frontLockedDir = nil,  -- 'closing' / 'away' / nil — target motion for the arrow, not which antenna hit
     rearLockedDir = nil,
     frontLockedPlate = nil,
     rearLockedPlate = nil,
@@ -26,15 +27,18 @@ Radar = {
     plateReaderEnabled = true,
     fastLockOn = false,
     fastLockedSpeed = nil,  -- m/s: frozen FAST window while antenna lock active (set with lock, cleared on unlock)
+    fastLockedDir = nil,    -- 'closing' / 'away' / nil — direction of the frozen FAST vehicle, for the FAST arrows
     speedUnit = Config.speedUnit,
     -- STALKER DUAL controller functions
-    stationaryMode = false,      -- MOV STA: moving vs stationary
+    movStaMode = 0,              -- MOV STA: 0=moving, 1=stationary closing, 2=stationary away, 3=bi-directional stationary
+    stationaryMode = false,      -- derived: movStaMode > 0 (kept for exports / saved settings)
     antennaRange = Config.antennaMaxDist,  -- SEN: radar range
     patrolSpeedThreshold = 5,   -- PS 5/20 1: 1, 5, or 20 mph min
     beepVolume = 1.0,           -- Speaker: volume 0-1
     psBlank = false,            -- PS BLANK: blank patrol when locked
     displayBrightness = 1.0,   -- LIGHT: 0.5, 1.0, 1.5
-    dopplerEnabled = false,    -- Doppler sound on/off (toggle via /toggledoppler)
+    dopplerMode = 'off',       -- 'off' | 'on' | 'stationary' (cycle via /toggledoppler)
+    dopplerEnabled = false,    -- derived: dopplerMode ~= 'off' (kept for exports / back-compat)
     -- Current target data (not locked)
     frontTargetSpeed = nil,
     frontTargetDir = nil,
@@ -46,12 +50,18 @@ Radar = {
 
 local KVP_DISPLAY = Config.kvpDisplay
 local KVP_PLATE_DISPLAY = Config.kvpPlateDisplay
+local KVP_REMOTE = Config.kvpRemote
 local KVP_SETTINGS = Config.kvpSettings
 local MAX_DIST = Config.antennaMaxDist
 
 --- Remote open state (declared early so sendToNUI can sync NUI focus for radar clicks)
 local remoteOpen = false
 local lastNuiFocusKey = nil
+
+--- Seconds the radar has been powered since the last auto self-test.
+--- Declared up here because the power and ANT handlers reset it long before the
+--- timer thread is defined; a later `local` would leave those writing to a global.
+local autoTestTimer = 0
 
 --- NUI focus only while remote is open or layout adjust is active — no cursor after closing remote.
 local function forceNuiFocusOff()
@@ -209,6 +219,86 @@ local function isRadarPlyMountedInPatrolVehicle(plyVeh)
     return IsPedInVehicle(PlayerPedId(), plyVeh, false)
 end
 
+--- Range rate along the patrol->target line of sight (m/s): negative = closing, positive = opening.
+--- This is the quantity a Doppler unit actually measures, so it stays right in both modes:
+--- same-lane a slower car ahead reads closing, opposite-lane an oncoming car reads closing.
+local function getRangeRate(plyVeh, tgtVeh, tgtPos, plyPos, dist)
+    if dist < 0.01 then return 0.0 end
+    local pv = GetEntityVelocity(plyVeh)
+    local tv = GetEntityVelocity(tgtVeh)
+    local lx, ly, lz = (tgtPos.x - plyPos.x) / dist, (tgtPos.y - plyPos.y) / dist, (tgtPos.z - plyPos.z) / dist
+    return (tv.x - pv.x) * lx + (tv.y - pv.y) * ly + (tv.z - pv.z) * lz
+end
+
+--- 'closing' / 'away' for the TARGET + LOCK arrows, or nil inside the deadband.
+--- A target pacing the patrol car has ~zero range rate; a real unit shows neither
+--- arrow there rather than flickering between them.
+local function directionFromRangeRate(rangeRate)
+    local rrMph = Utils.ConvertSpeed(rangeRate or 0.0, 'mph')
+    local dead = Config.closingDeadbandMph or 1.5
+    if rrMph <= -dead then return 'closing' end
+    if rrMph >= dead then return 'away' end
+    return nil
+end
+
+--- MOV STA: the four operating modes. Moving is the only one that reads while rolling;
+--- the three stationary modes require the patrol car parked and differ in which direction
+--- of travel they will report.
+local MOV_STA_MOVING = 0
+local MOV_STA_CLOSING = 1
+local MOV_STA_AWAY = 2
+local MOV_STA_BIDIR = 3
+local MOV_STA_LABELS = {
+    [MOV_STA_MOVING] = 'Moving',
+    [MOV_STA_CLOSING] = 'Stationary Closing',
+    [MOV_STA_AWAY] = 'Stationary Away',
+    [MOV_STA_BIDIR] = 'Bi-Directional Stationary',
+}
+--- 7-segment legends from the manual, all shown in the patrol window. '[' and ']' are real
+--- bracket glyphs in Segment7Standard. '_' is the bottom segment: stock Segment7Standard
+--- draws underscore at the *middle* bar (identical to '-' and ':'), so nui/font/Segment7Standard.otf
+--- carries a patched underscore shifted down 357 units to the bottom-bar row. Replacing that
+--- font with a stock copy puts the bi-directional bar back in the middle.
+local MOV_STA_DISPLAY = {
+    [MOV_STA_MOVING] = '[ ]',
+    [MOV_STA_CLOSING] = ' SC',
+    [MOV_STA_AWAY] = ' SA',
+    [MOV_STA_BIDIR] = ' S_',
+}
+--- Which range-rate direction each stationary mode reports; nil = accept either.
+local MOV_STA_DIRECTION = {
+    [MOV_STA_CLOSING] = 'closing',
+    [MOV_STA_AWAY] = 'away',
+}
+
+--- movStaMode is the source of truth; stationaryMode mirrors it so the "parked to read"
+--- gate, exports and saved settings keep working unchanged.
+local function setMovStaMode(mode)
+    if type(mode) ~= 'number' or MOV_STA_LABELS[mode] == nil then mode = MOV_STA_MOVING end
+    Radar.movStaMode = mode
+    Radar.stationaryMode = mode ~= MOV_STA_MOVING
+end
+
+--- MOV STA button + menu: Moving -> Stationary Closing -> Stationary Away -> Bi-Directional
+local function cycleMovStaMode()
+    setMovStaMode(((Radar.movStaMode or MOV_STA_MOVING) + 1) % 4)
+end
+
+--- Drop hits travelling the wrong way for the active stationary mode. Applied at capture so
+--- TARGET, FAST and the plate reader all see the same set. Targets inside the closing
+--- deadband have no usable direction, so SC/SA ignore them the way the real unit does.
+local function filterHitsByMovStaDirection(hits)
+    local want = MOV_STA_DIRECTION[Radar.movStaMode or MOV_STA_MOVING]
+    if not want then return hits end
+    local out = {}
+    for _, hit in ipairs(hits) do
+        if directionFromRangeRate(hit.rangeRate) == want then
+            out[#out + 1] = hit
+        end
+    end
+    return out
+end
+
 --- Shoot ray and check if vehicle is hit
 local function shootRay(plyVeh, veh, startX, endX, endY, includeStationary)
     local pos = GetEntityCoords(veh)
@@ -233,7 +323,8 @@ local function shootRay(plyVeh, veh, startX, endX, endY, includeStationary)
     -- Lateral offset from patrol centerline (|local X|); lower = more on boresight (real beam favors main lobe).
     local rel = GetOffsetFromEntityGivenWorldCoords(plyVeh, pos.x, pos.y, pos.z)
     local lateralAbs = math.abs(rel.x)
-    return { veh = veh, relPos = relPos, dist = dist, speed = entSpeed, size = size, lateralAbs = lateralAbs }
+    local rangeRate = getRangeRate(plyVeh, veh, pos, plyPos, dist)
+    return { veh = veh, relPos = relPos, dist = dist, speed = entSpeed, size = size, lateralAbs = lateralAbs, rangeRate = rangeRate }
 end
 
 --- Capture vehicles for all rays
@@ -252,7 +343,7 @@ local function captureVehicles(plyVeh, includeStationary)
             end
         end
     end
-    return captured
+    return filterHitsByMovStaDirection(captured)
 end
 
 --- World debug: draw RAY_TRACES (same geometry as capture). Green = same-direction lanes, orange = opposite-lane rays; caps show beam spread.
@@ -426,7 +517,9 @@ local function getBestForAntenna(captured, ant, mode, sortMode)
         sortHitsBoresight(filtered)
     end
     local best = filtered[1]
-    local dir = best.relPos == 1 and 'front' or 'rear'
+    -- relPos stays the antenna assignment (ahead/behind the patrol car); the arrows
+    -- report target motion instead, so they come from range rate.
+    local dir = directionFromRangeRate(best.rangeRate)
     return best, dir
 end
 
@@ -480,6 +573,7 @@ end
 --- FAST window: snapshot when antenna lock is applied — faster second target if any, else mirror primary (single vehicle in beam).
 local function refreshFastLockedFrozenAtLock()
     Radar.fastLockedSpeed = nil
+    Radar.fastLockedDir = nil
     if not Radar.fastLockOn then return end
     if not (Radar.frontLocked or Radar.rearLocked) then return end
     local plyVeh = Player:GetVehicle()
@@ -490,7 +584,10 @@ local function refreshFastLockedFrozenAtLock()
     if primary and primary.veh then
         local other = fastestFasterThanPrimary(captured, primary)
         -- Stalker: FAST is the faster car vs a stronger TARGET; with only one vehicle, mirror TARGET into FAST so lock isn't blank.
-        Radar.fastLockedSpeed = (other and other.speed) or primary.speed
+        -- The arrows freeze with the speed, so they keep pointing at whichever vehicle the window is holding.
+        local frozen = other or primary
+        Radar.fastLockedSpeed = frozen.speed
+        Radar.fastLockedDir = directionFromRangeRate(frozen.rangeRate)
     end
 end
 
@@ -500,7 +597,61 @@ local function syncFastLockedAfterFastLockToggle()
         refreshFastLockedFrozenAtLock()
     else
         Radar.fastLockedSpeed = nil
+        Radar.fastLockedDir = nil
     end
+end
+
+--- Single source of truth for ANT: selects the antenna and derives the XMIT flags from it.
+--- Only one antenna ever transmits. `transmitting` defaults to true; pass false to keep the
+--- selection while XMIT is off, so toggling XMIT back on returns to the same antenna.
+local function setActiveAntenna(which, transmitting)
+    Radar.activeAntenna = (which == 'rear') and 'rear' or 'front'
+    local on = transmitting
+    if on == nil then on = true end
+    Radar.frontXmit = on and Radar.activeAntenna == 'front'
+    Radar.rearXmit = on and Radar.activeAntenna == 'rear'
+end
+
+--- True while the selected antenna is transmitting.
+local function isTransmitting()
+    return Radar.frontXmit or Radar.rearXmit
+end
+
+local DOPPLER_LABELS = { off = 'Off', on = 'On', stationary = 'On (Stationary Only)' }
+local DOPPLER_NEXT = { off = 'on', on = 'stationary', stationary = 'off' }
+
+--- dopplerMode is the source of truth; dopplerEnabled mirrors it so exports and the
+--- tick-rate check keep working unchanged.
+local function setDopplerMode(mode)
+    Radar.dopplerMode = DOPPLER_LABELS[mode] and mode or 'off'
+    Radar.dopplerEnabled = Radar.dopplerMode ~= 'off'
+end
+
+--- /toggledoppler + menu: Off -> On -> On (Stationary Only) -> Off
+local function cycleDopplerMode()
+    setDopplerMode(DOPPLER_NEXT[Radar.dopplerMode] or 'on')
+end
+
+--- 'stationary' mode gates the tone on the patrol car actually being stopped.
+local function dopplerAllowedAtPatrolSpeed(patrolSpeedMs)
+    if Radar.dopplerMode == 'off' then return false end
+    if Radar.dopplerMode ~= 'stationary' then return true end
+    local maxMph = Config.dopplerStationaryMaxMph or 2.0
+    return Utils.ConvertSpeed(patrolSpeedMs or 0.0, 'mph') <= maxMph
+end
+
+--- Doppler tone tracks the speed *difference* between target and patrol car, so the pitch
+--- reacts to how fast you are going, not just the number on the display:
+---   stopped + target at 75    -> 75 mph difference, high tone
+---   rolling at 65 + target 75 -> 10 mph difference, low tone
+--- Direction is ignored (plain subtraction, magnitude only): a 75 mph target reads 10 whether
+--- it is ahead of you or oncoming. Use range rate here instead if you ever want oncoming
+--- traffic to read as closing speed (65 + 75) the way real Doppler hardware does.
+local function dopplerMphFromSpeeds(targetSpeedMs, patrolSpeedMs)
+    if targetSpeedMs == nil then return nil end
+    local targetMph = Utils.ConvertSpeed(targetSpeedMs, 'mph')
+    local patrolMph = Utils.ConvertSpeed(patrolSpeedMs or 0.0, 'mph')
+    return math.abs(targetMph - patrolMph)
 end
 
 --- Load settings from KVP
@@ -515,15 +666,27 @@ local function loadSettings()
             Radar.speedUnit = data.speedUnit or Config.speedUnit
             Radar.frontXmit = data.frontXmit or false
             Radar.rearXmit = data.rearXmit or false
+            -- Older saves could hold both antennas on; collapse that onto a single selection.
+            Radar.activeAntenna = data.activeAntenna
+                or ((Radar.rearXmit and not Radar.frontXmit) and 'rear')
+                or 'front'
+            setActiveAntenna(Radar.activeAntenna, isTransmitting())
             Radar.frontMode = data.frontMode or 0
             Radar.rearMode = data.rearMode or 0
-            Radar.stationaryMode = data.stationaryMode or false
+            -- Saves from before the four-mode MOV STA only stored a boolean; the old
+            -- "stationary" read both directions, which is bi-directional today.
+            if data.movStaMode ~= nil then
+                setMovStaMode(data.movStaMode)
+            else
+                setMovStaMode(data.stationaryMode and MOV_STA_BIDIR or MOV_STA_MOVING)
+            end
             Radar.antennaRange = data.antennaRange or Config.antennaMaxDist
             Radar.patrolSpeedThreshold = data.patrolSpeedThreshold or 5
             Radar.beepVolume = data.beepVolume or 1.0
             Radar.psBlank = data.psBlank or false
             Radar.displayBrightness = data.displayBrightness or 1.0
-            Radar.dopplerEnabled = data.dopplerEnabled == true
+            -- Older saves only had the boolean; a saved `true` becomes plain 'on'.
+            setDopplerMode(data.dopplerMode or (data.dopplerEnabled == true and 'on') or 'off')
             Radar.plateReaderEnabled = data.plateReaderEnabled ~= false
         end
     end
@@ -534,16 +697,19 @@ local function saveSettings()
     local data = {
         fastLockOn = Radar.fastLockOn,
         speedUnit = Radar.speedUnit,
+        activeAntenna = Radar.activeAntenna,
         frontXmit = Radar.frontXmit,
         rearXmit = Radar.rearXmit,
         frontMode = Radar.frontMode,
         rearMode = Radar.rearMode,
+        movStaMode = Radar.movStaMode,
         stationaryMode = Radar.stationaryMode,
         antennaRange = Radar.antennaRange,
         patrolSpeedThreshold = Radar.patrolSpeedThreshold,
         beepVolume = Radar.beepVolume,
         psBlank = Radar.psBlank,
         displayBrightness = Radar.displayBrightness,
+        dopplerMode = Radar.dopplerMode,
         dopplerEnabled = Radar.dopplerEnabled,
         plateReaderEnabled = Radar.plateReaderEnabled,
     }
@@ -581,23 +747,36 @@ local function savePlateDisplay(data)
     end
 end
 
+local function loadRemoteDisplay()
+    return loadKvpJson(KVP_REMOTE)
+end
+
+local function saveRemoteDisplay(data)
+    if data and type(data) == 'table' then
+        SetResourceKvp(KVP_REMOTE, json.encode(data))
+    end
+end
+
 local function sendInitDisplayConfig()
     local displayData = loadDisplay()
     local plateDisplayData = loadPlateDisplay()
+    local remoteDisplayData = loadRemoteDisplay()
     SendNUIMessage({
         _type = 'init',
         display = displayData or Config.displayDefaults,
         plateDisplay = plateDisplayData or Config.plateReaderDefaults,
+        remoteDisplay = remoteDisplayData or Config.remoteDefaults,
     })
 end
 
---- Play voice enunciator after a lock: FRONT/REAR + CLOSING/AWAY
+--- Play voice enunciator after a lock: FRONT/REAR (antenna) + CLOSING/AWAY (target motion).
+--- lockedDir is already 'closing'/'away', or nil inside the deadband — the NUI then
+--- speaks the antenna only.
 local function playVoiceEnunciator(antenna, lockedDir)
-    local direction = (lockedDir == 'front') and 'closing' or 'away'
     SendNUIMessage({
         _type = 'voiceEnunciator',
         antenna = antenna,
-        direction = direction,
+        direction = lockedDir,
         vol = Radar.beepVolume or 1.0,
     })
 end
@@ -656,17 +835,17 @@ local function clearAllRadarLocks()
     Radar.frontPlateLocked = false
     Radar.rearPlateLocked = false
     Radar.fastLockedSpeed = nil
+    Radar.fastLockedDir = nil
     lastFrontPlateText, lastFrontPlateStyle = '--------', 0
     lastRearPlateText, lastRearPlateStyle = '--------', 0
 end
 
 --- Antenna / UI defaults when powering on (menu + PWR)
 local function applyOperationalDefaultsWhenPoweringOn()
-    Radar.frontXmit = true
-    Radar.rearXmit = false -- ANT: front only (rear off until operator cycles ANT)
+    setActiveAntenna('front', true) -- ANT: front (rear off until operator cycles ANT)
     Radar.frontMode = 1    -- SAME/OPP: same-lane only (1=same, 2=opp, 3=both)
     Radar.rearMode = 1
-    Radar.stationaryMode = false
+    setMovStaMode(MOV_STA_MOVING) -- MOV STA: moving
     Radar.fastLockOn = true
     Radar.antennaRange = 200 -- SEN: 200 (100–500 cycle; not 300+)
     Radar.patrolSpeedThreshold = 5
@@ -684,6 +863,7 @@ local function clearFrontAntennaLock()
         refreshFastLockedFrozenAtLock()
     else
         Radar.fastLockedSpeed = nil
+        Radar.fastLockedDir = nil
     end
 end
 
@@ -695,6 +875,7 @@ local function clearRearAntennaLock()
         refreshFastLockedFrozenAtLock()
     else
         Radar.fastLockedSpeed = nil
+        Radar.fastLockedDir = nil
     end
 end
 
@@ -782,25 +963,10 @@ local function acquirePlateLockFromAntenna(which)
     return false
 end
 
---- ANT / menu: front only → rear only → both → front only (never toggles all XMIT off)
+--- ANT / menu: front → rear → front. The real unit has no "both" position.
+--- Selecting an antenna also brings XMIT up, so ANT never leaves the radar silent.
 local function cycleAntennaTransmit()
-    if Radar.frontXmit and not Radar.rearXmit then
-        -- Front only → rear only
-        Radar.frontXmit = false
-        Radar.rearXmit = true
-    elseif Radar.rearXmit and not Radar.frontXmit then
-        -- Rear only → both
-        Radar.frontXmit = true
-        Radar.rearXmit = true
-    elseif Radar.frontXmit and Radar.rearXmit then
-        -- Both → front only
-        Radar.frontXmit = true
-        Radar.rearXmit = false
-    else
-        -- Neither on (e.g. after XMIT off) → front only
-        Radar.frontXmit = true
-        Radar.rearXmit = false
-    end
+    setActiveAntenna(Radar.activeAntenna == 'front' and 'rear' or 'front', true)
 end
 
 local function cyclePatrolSpeedThreshold()
@@ -832,6 +998,15 @@ local function sendToNUI()
     if patrolSpeed < 0.01 then patrolFormatted = Utils.FormatSpeedEmpty() end
     if patrolSpeedUnit < (Radar.patrolSpeedThreshold or 5) then patrolFormatted = Utils.FormatSpeedEmpty() end
     if Radar.psBlank and (Radar.frontLocked or Radar.rearLocked) then patrolFormatted = Utils.FormatSpeedEmpty() end
+    -- MOV STA legends live in the patrol window. The three stationary modes hold theirs the
+    -- whole time they are selected; moving shows [ ] only while there is no patrol speed to
+    -- display (stopped, under the PS threshold, or blanked by PS BLANK) and yields to the
+    -- speed as soon as one appears.
+    if Radar.power then
+        if Radar.movStaMode ~= MOV_STA_MOVING or patrolFormatted == Utils.FormatSpeedEmpty() then
+            patrolFormatted = MOV_STA_DISPLAY[Radar.movStaMode]
+        end
+    end
 
     local targetFront = Utils.FormatSpeedEmpty()
     local targetRear = Utils.FormatSpeedEmpty()
@@ -840,14 +1015,16 @@ local function sendToNUI()
     local frontBestMergeScore = nil  -- higher wins when both antennas have a target (see mergeScore)
     local rearBestMergeScore = nil
     local fastValue = Utils.FormatSpeedEmpty()
-    local targetSpeedMph = nil  -- For Doppler level (target speed in mph)
+    local targetSpeedMs = nil  -- speed of whichever target the TARGET window shows (drives Doppler)
     local xmit = Radar.frontXmit or Radar.rearXmit
     local front = Radar.frontXmit
     local rear = Radar.rearXmit
     local same = (Radar.frontMode == 1 or Radar.frontMode == 3 or Radar.rearMode == 1 or Radar.rearMode == 3)
     local lock = Radar.frontLocked or Radar.rearLocked
-    local lockFrontArrow = false
-    local lockRearArrow = false
+    -- Two arrow pairs on the bezel: one beside TARGET, one beside FAST. Each reports the
+    -- direction of the vehicle *its own* window is showing, so they blank together with it.
+    local fastFrontArrow = false
+    local fastRearArrow = false
     local targetFrontArrow = false
     local targetRearArrow = false
     local frontTargetFrontArrow, frontTargetRearArrow = false, false
@@ -871,28 +1048,26 @@ local function sendToNUI()
                     if best.speed >= 0.1 then
                         frontBestSpeed = best.speed
                         frontBestMergeScore = mergeScore(best)
-                        targetSpeedMph = Utils.ConvertSpeed(best.speed, 'mph')
+                        targetSpeedMs = best.speed
                         targetFront = Utils.FormatSpeed(Utils.ConvertSpeed(best.speed, Radar.speedUnit))
-                        frontTargetFrontArrow = (dir == 'front')
-                        frontTargetRearArrow = (dir == 'rear')
+                        frontTargetFrontArrow = (dir == 'away')
+                        frontTargetRearArrow = (dir == 'closing')
                         targetFrontArrow = frontTargetFrontArrow
                         targetRearArrow = frontTargetRearArrow
                     end
                     frontLivePlateText, frontLivePlateStyle = getPlateDisplayData(best.veh)
                     storeLastFrontPlate(frontLivePlateText, frontLivePlateStyle)
                 end
-                lockFrontArrow = (Radar.frontLockedDir == 'front')
-                lockRearArrow = (Radar.frontLockedDir == 'rear')
             else
                 local best, dir = getBestForAntenna(captured, 'front', Radar.frontMode, liveMode)
                 if best then
                     if best.speed >= 0.1 then
                         frontBestSpeed = best.speed
                         frontBestMergeScore = mergeScore(best)
-                        targetSpeedMph = Utils.ConvertSpeed(best.speed, 'mph')
+                        targetSpeedMs = best.speed
                         targetFront = Utils.FormatSpeed(Utils.ConvertSpeed(best.speed, Radar.speedUnit))
-                        frontTargetFrontArrow = (dir == 'front')
-                        frontTargetRearArrow = (dir == 'rear')
+                        frontTargetFrontArrow = (dir == 'away')
+                        frontTargetRearArrow = (dir == 'closing')
                     end
                     frontLivePlateText, frontLivePlateStyle = getPlateDisplayData(best.veh)
                     storeLastFrontPlate(frontLivePlateText, frontLivePlateStyle)
@@ -909,17 +1084,13 @@ local function sendToNUI()
                     if best.speed >= 0.1 then
                         rearBestSpeed = best.speed
                         rearBestMergeScore = mergeScore(best)
-                        if targetSpeedMph == nil then targetSpeedMph = Utils.ConvertSpeed(best.speed, 'mph') end
+                        if targetSpeedMs == nil then targetSpeedMs = best.speed end
                         targetRear = Utils.FormatSpeed(Utils.ConvertSpeed(best.speed, Radar.speedUnit))
-                        rearTargetFrontArrow = (dir == 'front')
-                        rearTargetRearArrow = (dir == 'rear')
+                        rearTargetFrontArrow = (dir == 'away')
+                        rearTargetRearArrow = (dir == 'closing')
                     end
                     rearLivePlateText, rearLivePlateStyle = getPlateDisplayData(best.veh)
                     storeLastRearPlate(rearLivePlateText, rearLivePlateStyle)
-                end
-                if not Radar.frontLocked then
-                    lockFrontArrow = (Radar.rearLockedDir == 'front')
-                    lockRearArrow = (Radar.rearLockedDir == 'rear')
                 end
             else
                 local best, dir = getBestForAntenna(captured, 'rear', Radar.rearMode, liveMode)
@@ -927,10 +1098,10 @@ local function sendToNUI()
                     if best.speed >= 0.1 then
                         rearBestSpeed = best.speed
                         rearBestMergeScore = mergeScore(best)
-                        if targetSpeedMph == nil then targetSpeedMph = Utils.ConvertSpeed(best.speed, 'mph') end
+                        if targetSpeedMs == nil then targetSpeedMs = best.speed end
                         targetRear = Utils.FormatSpeed(Utils.ConvertSpeed(best.speed, Radar.speedUnit))
-                        rearTargetFrontArrow = (dir == 'front')
-                        rearTargetRearArrow = (dir == 'rear')
+                        rearTargetFrontArrow = (dir == 'away')
+                        rearTargetRearArrow = (dir == 'closing')
                     end
                     rearLivePlateText, rearLivePlateStyle = getPlateDisplayData(best.veh)
                     storeLastRearPlate(rearLivePlateText, rearLivePlateStyle)
@@ -956,12 +1127,12 @@ local function sendToNUI()
         if frontBestMergeScore ~= nil and rearBestMergeScore ~= nil then
             if frontBestMergeScore >= rearBestMergeScore then
                 targetSpeed = targetFront
-                targetSpeedMph = Utils.ConvertSpeed(frontBestSpeed, 'mph')
+                targetSpeedMs = frontBestSpeed
                 targetFrontArrow = frontTargetFrontArrow
                 targetRearArrow = frontTargetRearArrow
             else
                 targetSpeed = targetRear
-                targetSpeedMph = Utils.ConvertSpeed(rearBestSpeed, 'mph')
+                targetSpeedMs = rearBestSpeed
                 targetFrontArrow = rearTargetFrontArrow
                 targetRearArrow = rearTargetRearArrow
             end
@@ -976,10 +1147,14 @@ local function sendToNUI()
     end
 
     -- FAST window: frozen m/s snapshot while antenna lock on; live fastest-in-beam faster than TARGET when unlocked.
+    local fastSpeedMs = nil  -- raw m/s behind fastValue, nil when the window is blank
     if Radar.fastLockOn then
         if Radar.frontLocked or Radar.rearLocked then
             if Radar.fastLockedSpeed ~= nil then
+                fastSpeedMs = Radar.fastLockedSpeed
                 fastValue = Utils.FormatSpeed(Utils.ConvertSpeed(Radar.fastLockedSpeed, Radar.speedUnit))
+                fastFrontArrow = (Radar.fastLockedDir == 'away')
+                fastRearArrow = (Radar.fastLockedDir == 'closing')
             else
                 fastValue = Utils.FormatSpeedEmpty()
             end
@@ -988,16 +1163,24 @@ local function sendToNUI()
             if primary and primary.veh then
                 local other = fastestFasterThanPrimary(captured, primary)
                 if other then
+                    fastSpeedMs = other.speed
                     fastValue = Utils.FormatSpeed(Utils.ConvertSpeed(other.speed, Radar.speedUnit))
+                    local fastDir = directionFromRangeRate(other.rangeRate)
+                    fastFrontArrow = (fastDir == 'away')
+                    fastRearArrow = (fastDir == 'closing')
                 end
             end
         end
     end
 
-    -- Doppler: send raw speed (mph) for smooth incremental pitch, nil when no target
+    -- Doppler: target speed minus patrol speed (mph) for smooth incremental pitch, nil when no target.
+    -- FAST wins whenever it holds a reading: that window only fills with a vehicle faster
+    -- than TARGET, and the tone should follow the car the operator is chasing.
+    -- 'stationary' mode drops to nil the moment the patrol car rolls, which stops the tone.
+    -- Patrol speed is read live even while FAST is frozen, so slowing down raises the tone.
     local dopplerSpeedMph = nil
-    if Radar.dopplerEnabled and targetSpeedMph and targetSpeedMph >= 0 then
-        dopplerSpeedMph = targetSpeedMph
+    if dopplerAllowedAtPatrolSpeed(patrolSpeed) then
+        dopplerSpeedMph = dopplerMphFromSpeeds(fastSpeedMs or targetSpeedMs, patrolSpeed)
     end
 
     SendNUIMessage({
@@ -1013,8 +1196,8 @@ local function sendToNUI()
         rear = rear,
         same = same,
         lock = lock,
-        lockFrontArrow = lockFrontArrow,
-        lockRearArrow = lockRearArrow,
+        fastFrontArrow = fastFrontArrow,
+        fastRearArrow = fastRearArrow,
         targetFrontArrow = targetFrontArrow,
         targetRearArrow = targetRearArrow,
         brightness = Radar.displayBrightness or 1.0,
@@ -1115,14 +1298,14 @@ local function openMenu()
                 end,
             },
             {
-                title = 'Front Antenna - XMIT',
-                description = Radar.frontXmit and 'On' or 'Off',
+                title = 'XMIT',
+                description = (isTransmitting() and 'On' or 'Off') .. ' - ' .. (Radar.activeAntenna == 'rear' and 'Rear' or 'Front') .. ' antenna',
                 icon = 'antenna',
                 onSelect = function()
                     if Radar.power then
-                        Radar.frontXmit = not Radar.frontXmit
+                        setActiveAntenna(Radar.activeAntenna, not isTransmitting())
                         saveSettings()
-                        SendNUIMessage({ _type = 'audio', name = Radar.frontXmit and 'XmitOn' or 'XmitOff', vol = Radar.beepVolume or 1.0 })
+                        SendNUIMessage({ _type = 'audio', name = isTransmitting() and 'XmitOn' or 'XmitOff', vol = Radar.beepVolume or 1.0 })
                     end
                     openMenu()
                 end,
@@ -1134,19 +1317,6 @@ local function openMenu()
                 onSelect = function()
                     Radar.frontMode = (Radar.frontMode + 1) % 4
                     saveSettings()
-                    openMenu()
-                end,
-            },
-            {
-                title = 'Rear Antenna - XMIT',
-                description = Radar.rearXmit and 'On' or 'Off',
-                icon = 'antenna',
-                onSelect = function()
-                    if Radar.power then
-                        Radar.rearXmit = not Radar.rearXmit
-                        saveSettings()
-                        SendNUIMessage({ _type = 'audio', name = Radar.rearXmit and 'XmitOn' or 'XmitOff', vol = Radar.beepVolume or 1.0 })
-                    end
                     openMenu()
                 end,
             },
@@ -1180,21 +1350,21 @@ local function openMenu()
             },
             {
                 title = 'Switch Antenna (ANT)',
-                description = 'Toggle front/rear',
+                description = (Radar.activeAntenna == 'rear' and 'Rear' or 'Front') .. ' - select to switch',
                 icon = 'arrows-left-right',
                 onSelect = function()
                     cycleAntennaTransmit()
                     saveSettings()
-                    SendNUIMessage({ _type = 'audio', name = Radar.frontXmit and 'XmitOn' or 'XmitOff', vol = Radar.beepVolume or 1.0 })
+                    SendNUIMessage({ _type = 'audio', name = 'XmitOn', vol = Radar.beepVolume or 1.0 })
                     openMenu()
                 end,
             },
             {
                 title = 'Moving / Stationary (MOV STA)',
-                description = Radar.stationaryMode and 'Stationary' or 'Moving',
+                description = MOV_STA_LABELS[Radar.movStaMode] or 'Moving',
                 icon = 'car',
                 onSelect = function()
-                    Radar.stationaryMode = not Radar.stationaryMode
+                    cycleMovStaMode()
                     saveSettings()
                     openMenu()
                 end,
@@ -1252,10 +1422,10 @@ local function openMenu()
             },
             {
                 title = 'Doppler Sound',
-                description = Radar.dopplerEnabled and 'On' or 'Off',
+                description = DOPPLER_LABELS[Radar.dopplerMode] or 'Off',
                 icon = 'wave-square',
                 onSelect = function()
-                    Radar.dopplerEnabled = not Radar.dopplerEnabled
+                    cycleDopplerMode()
                     saveSettings()
                     sendToNUI()
                     openMenu()
@@ -1302,6 +1472,16 @@ local function openMenu()
                 onSelect = function()
                     DeleteResourceKvp(KVP_DISPLAY)
                     SendNUIMessage({ _type = 'resetDisplay', display = Config.displayDefaults })
+                    openMenu()
+                end,
+            },
+            {
+                title = 'Reset Remote Position',
+                description = 'Re-centers the remote at default size',
+                icon = 'rotate-left',
+                onSelect = function()
+                    DeleteResourceKvp(KVP_REMOTE)
+                    SendNUIMessage({ _type = 'resetRemoteDisplay', remoteDisplay = Config.remoteDefaults })
                     openMenu()
                 end,
             },
@@ -1392,10 +1572,10 @@ RegisterCommand('seeker_radar_debug', function()
 end, false)
 
 RegisterCommand('toggledoppler', function()
-    Radar.dopplerEnabled = not Radar.dopplerEnabled
+    cycleDopplerMode()
     saveSettings()
     sendToNUI()
-    lib.notify({ type = 'info', description = 'Doppler sound: ' .. (Radar.dopplerEnabled and 'ON' or 'OFF') })
+    lib.notify({ type = 'info', description = 'Doppler sound: ' .. (DOPPLER_LABELS[Radar.dopplerMode] or 'Off') })
 end, false)
 
 RegisterCommand('togglepr', function()
@@ -1501,6 +1681,11 @@ RegisterNUICallback('savePlateDisplay', function(data, cb)
     cb('ok')
 end)
 
+RegisterNUICallback('saveRemoteDisplay', function(data, cb)
+    saveRemoteDisplay(parseNuiJsonData(data))
+    cb('ok')
+end)
+
 RegisterNUICallback('nuiReady', function(_, cb)
     sendInitDisplayConfig()
     cb('ok')
@@ -1564,30 +1749,24 @@ RegisterNUICallback('remoteBtn', function(data, cb)
         autoTestTimer = 0
         cycleAntennaTransmit()
         saveSettings()
-        local label = (Radar.frontXmit and Radar.rearXmit) and 'bot' or (Radar.frontXmit and 'Fnt' or 'rEA')
+        local label = Radar.frontXmit and 'Fnt' or 'rEA'
         SendNUIMessage({ _type = 'tempDisplay', target = label, duration = 2000 })
-        -- 1 beep = front, 2 beeps = rear, 3 beeps = both
-        local beepCount = (Radar.frontXmit and Radar.rearXmit) and 3 or (Radar.rearXmit and 2 or 1)
+        -- 1 beep = front, 2 beeps = rear
+        local beepCount = Radar.rearXmit and 2 or 1
         SendNUIMessage({ _type = 'multiBeep', count = beepCount, vol = Radar.beepVolume or 1.0 })
 
     elseif action == 'xmit' then
-        local anyOn = Radar.frontXmit or Radar.rearXmit
-        if anyOn then
-            Radar.frontXmit = false
-            Radar.rearXmit = false
-        else
-            Radar.frontXmit = true
-            Radar.rearXmit = true
-        end
+        -- Toggles transmit on the selected antenna; the selection itself is unchanged.
+        setActiveAntenna(Radar.activeAntenna, not isTransmitting())
         saveSettings()
         SendNUIMessage({ _type = 'audio', name = 'beep', vol = Radar.beepVolume or 1.0 })
-        SendNUIMessage({ _type = 'audio', name = Radar.frontXmit and 'XmitOn' or 'XmitOff', vol = Radar.beepVolume or 1.0 })
+        SendNUIMessage({ _type = 'audio', name = isTransmitting() and 'XmitOn' or 'XmitOff', vol = Radar.beepVolume or 1.0 })
 
     elseif action == 'movSta' then
-        Radar.stationaryMode = not Radar.stationaryMode
+        cycleMovStaMode()
         saveSettings()
-        local label = Radar.stationaryMode and 'StA' or 'noV'
-        SendNUIMessage({ _type = 'tempDisplay', target = label, duration = 2000 })
+        -- Patrol window, not TARGET: that is where the legend lives once the flash ends.
+        SendNUIMessage({ _type = 'tempDisplay', patrol = MOV_STA_DISPLAY[Radar.movStaMode], duration = 2000 })
         SendNUIMessage({ _type = 'audio', name = 'beep', vol = Radar.beepVolume or 1.0 })
 
     elseif action == 'sameOpp' then
@@ -1724,17 +1903,29 @@ CreateThread(function()
     end
 end)
 
---- Auto self-test timer (real STALKER runs every 10 min, resets on antenna switch)
-local autoTestTimer = 0
+local AUTO_SELF_TEST_DEFAULT_INTERVAL = 600
 
+--- Seconds between automatic self-tests, or nil when the feature is off.
+--- Config.autoSelfTest is the switch; the interval is validated separately so a bad
+--- value can't disable the feature silently or crash the timer thread.
+local function getAutoSelfTestInterval()
+    if not Config.autoSelfTest then return nil end
+    local interval = Config.autoSelfTestInterval
+    if type(interval) ~= 'number' or interval <= 0 then
+        interval = AUTO_SELF_TEST_DEFAULT_INTERVAL
+    end
+    return interval
+end
+
+--- Auto self-test timer (real STALKER runs every 10 min, resets on antenna switch)
 CreateThread(function()
     while true do
-        local interval = Config.autoSelfTestInterval
-        if interval and interval > 0 and Radar.power then
+        local interval = getAutoSelfTestInterval()
+        if interval and Radar.power then
             autoTestTimer = autoTestTimer + 1
             if autoTestTimer >= interval then
                 autoTestTimer = 0
-                SendNUIMessage({ _type = 'multiBeep', count = 4, vol = Radar.beepVolume or 1.0 })
+                SendNUIMessage({ _type = 'selfTest', vol = Radar.beepVolume or 1.0 })
             end
         else
             autoTestTimer = 0

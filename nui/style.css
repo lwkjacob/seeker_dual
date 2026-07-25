@@ -401,6 +401,43 @@ body {
     pointer-events: auto;
 }
 
+/* Applied once the remote has a saved/dragged position. Until then the overlay's
+   flex centering handles it, which stays centered at any resolution. */
+.remote-wrap.positioned {
+    position: absolute;
+    transform-origin: top left;
+}
+
+.remote-wrap.adjusting {
+    cursor: move;
+    outline: 2px dashed rgba(255, 204, 0, 0.9);
+    outline-offset: 4px;
+}
+
+/* Buttons are inert while repositioning so a drag across the face can't fire an action. */
+.remote-wrap.adjusting .remote-btn {
+    pointer-events: none;
+}
+
+.remote-adjust-hint {
+    display: none;
+    position: absolute;
+    bottom: -30px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.8);
+    color: #fff;
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    white-space: nowrap;
+    pointer-events: none;
+}
+
+.remote-wrap.adjusting .remote-adjust-hint {
+    display: block;
+}
+
 .remote-img {
     width: 100%;
     height: auto;

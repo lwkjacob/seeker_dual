@@ -54,6 +54,12 @@ Config.fastRequiresStrongerPrimary = false
 -- FAST candidate must be within this many meters of TARGET *range* (hit.dist <= primary.dist + this). Stops far horizon / ghost lane traffic from stealing FAST when only one car matters up close. Set 0 to disable.
 Config.fastMaxDistanceBeyondPrimaryM = 70.0
 
+-- TARGET/LOCK arrows report target motion along the beam, not which antenna saw it:
+-- down arrow = closing, up arrow = moving away. A target pacing the patrol car sits near
+-- zero closing speed, so neither arrow lights until |closing speed| passes this many mph.
+-- Raise it if the arrows twitch on cars holding your speed; lower it for quicker response.
+Config.closingDeadbandMph = 1.5
+
 -- Radar range (SEN): min/max in game units
 Config.antennaRangeMin = 100
 Config.antennaRangeMax = 500
@@ -69,6 +75,10 @@ Config.dopplerPitchMaxSpeedMph = 180
 Config.dopplerVolMin = 0.2
 Config.dopplerVolMax = 1.0
 Config.dopplerVolMaxSpeedMph = 150
+
+-- Doppler "On (Stationary Only)" mode: patrol speed at or below this (mph) counts as stopped.
+-- Above it the tone cuts out. Small non-zero value so idle creep / rocking doesn't chop the audio.
+Config.dopplerStationaryMaxMph = 2.0
 
 -- Vehicle classes allowed (18 = emergency/police)
 Config.allowedVehicleClasses = { 18 }
@@ -98,9 +108,24 @@ Config.plateReaderDefaults = {
     scale = 1.0,
 }
 
--- Auto self-test: interval in seconds (set to 0 or false to disable)
--- Runs a self-test every 600 seconds (10 minutes)
-Config.autoSelfTestInterval = false
+-- Default remote position/size (used when no KVP saved).
+-- Double-click the remote body to start moving it, double-click again to stop.
+-- x/y are optional: leave them nil and the remote stays screen-centered at any resolution
+-- (the radar and plate reader use fixed fractions tuned for 16:9). Height follows the
+-- image aspect ratio, so only width and scale are stored.
+Config.remoteDefaults = {
+    -- x = 0.43,
+    -- y = 0.20,
+    width = 280,
+    scale = 1.0,
+}
+
+-- Auto self-test: re-runs the full self-test on a timer while the radar is powered on.
+-- The timer only counts while powered, and resets on power toggle and antenna switch.
+Config.autoSelfTest = false
+-- Seconds between automatic self-tests (only used when Config.autoSelfTest is true).
+-- The real STALKER runs one every 10 minutes.
+Config.autoSelfTestInterval = 600
 
 -- Debug: show red transparent hitboxes on remote buttons for positioning
 Config.remoteDebug = false
@@ -111,6 +136,7 @@ Config.detectionZoneDebug = false
 -- KVP keys for persistence (DO NOT EDIT UNLESS YOU KNOW WHAT YOUR DOING)
 Config.kvpDisplay = 'seeker_dual_display'
 Config.kvpPlateDisplay = 'seeker_dual_plate_display'
+Config.kvpRemote = 'seeker_dual_remote'
 Config.kvpSettings = 'seeker_dual_settings'
 
 -- CDE CAD ALPR integration
