@@ -16,7 +16,7 @@ Config.keybindPlateLockRear = 'NUMPAD1'
 Config.speedUnit = 'mph'
 
 -- Maximum detection distance for antennas (game units)
-Config.antennaMaxDist = 350.0
+Config.antennaMaxDist = 1000.00
 
 -- Ray origin is shifted this many meters forward along the vehicle (+local Y) from the entity origin.
 -- Reduces bogus hits from traffic crossing your hood / cabin; tune per vehicle class if needed.
@@ -65,12 +65,16 @@ Config.antennaRangeMin = 100
 Config.antennaRangeMax = 500
 
 -- Patrol speed low-end thresholds (PS 5/20 1): 1, 5, or 20 - min speed to show patrol
-Config.patrolSpeedThresholds = { 1, 5, 20 }
+Config.patrolSpeedThresholds = { 1, 5, 10, 20 }
 
 -- Doppler pitch: linear ramp from min→max playback rate over 0..maxSpeed mph (each mph nudges pitch slightly; no stepped bands)
+-- maxSpeed is the hard ceiling: at or above it the tone holds dopplerPitchMax and stops climbing.
+-- It also sets how much pitch each mph below it is worth, so keep it near the fastest gap you
+-- actually read — a high ceiling (it used to be 180) spends most of the range on traffic nobody
+-- sees and leaves the everyday band sounding flat.
 Config.dopplerPitchMin = 0.7
 Config.dopplerPitchMax = 2.5
-Config.dopplerPitchMaxSpeedMph = 180
+Config.dopplerPitchMaxSpeedMph = 100
 -- Doppler volume: same idea — ramps smoothly with speed (optional separate cap)
 Config.dopplerVolMin = 0.2
 Config.dopplerVolMax = 1.0

@@ -118,14 +118,23 @@ function playNextVoice(vol) {
 // Doppler: pitch/volume scale linearly with every mph (no stepped threshold bands)
 const DOPPLER_PITCH_SCALE = 0.87; // <1 = lower overall pitch
 const DOPPLER_GAIN_SCALE = 0.52; // master output quieter
-/** Exponential smoothing time constant (seconds) for pitch/volume — tuned for ~33ms radar ticks so pitch glides instead of stair-stepping */
-const DOPPLER_PARAM_SMOOTH_S = 0.04;
+/** Exponential smoothing time constant (seconds) for pitch/volume. setTargetAtTime lands ~95%
+ *  of the way in 3x this, so 0.008 settles in ~24ms — under one 33ms radar tick. That reads as a
+ *  snap between two speeds while still taking the click off the transition; the old 0.04 (~120ms)
+ *  was long enough to hear as a glide up to the new pitch. Raise it for a softer sweep, but going
+ *  much below ~0.004 starts to click. */
+const DOPPLER_PARAM_SMOOTH_S = 0.008;
 
 let dopplerCtx = null;
 let dopplerBuffer = null;
 let dopplerGain = null;
 let dopplerSource = null;
 let currentDopplerSpeed = null;
+
+/* The radar is powered and already capturing targets while the self-test runs, so update
+   ticks carry a live dopplerSpeedMph the whole time. Hold the tone off until the sequence
+   finishes and the windows show real readings again. */
+let selfTestRunning = false;
 
 // 0 mph → pitchMin / volMin; at each maxSpeed → pitchMax / volMax (flat above that speed)
 let dopplerPitchMin = 1.0;
@@ -191,8 +200,18 @@ function playDopplerStart(speedMph, masterVolume) {
     dopplerSource = src;
 }
 
+/** Silence the loop and reset the ramp so the next target starts a fresh source. */
+function stopDopplerTone() {
+    if (dopplerSource) {
+        dopplerSource.stop();
+        dopplerSource.disconnect();
+        dopplerSource = null;
+    }
+    currentDopplerSpeed = null;
+}
+
 function updateDoppler(speedMph, masterVolume = 1.0) {
-    const hasTarget = speedMph !== null && speedMph !== undefined && speedMph >= 0;
+    const hasTarget = !selfTestRunning && speedMph !== null && speedMph !== undefined && speedMph >= 0;
 
     if (!dopplerCtx || !dopplerBuffer) return;
 
@@ -214,12 +233,7 @@ function updateDoppler(speedMph, masterVolume = 1.0) {
         }
         currentDopplerSpeed = speedMph;
     } else {
-        if (dopplerSource) {
-            dopplerSource.stop();
-            dopplerSource.disconnect();
-            dopplerSource = null;
-        }
-        currentDopplerSpeed = null;
+        stopDopplerTone();
     }
 }
 
@@ -271,6 +285,9 @@ function runSelfTestSequence(vol) {
     clearSelfTest();
     clearTimeout(window._tempDisplayTimer);
     tempDisplayActive = true;
+    // Also covers TEST pressed mid-patrol: the tone cuts out for the run, not just on power-up.
+    selfTestRunning = true;
+    stopDopplerTone();
 
     const tW = speedTarget.querySelector('.digit-display');
     const fW = speedFast.querySelector('.digit-display');
@@ -300,6 +317,8 @@ function runSelfTestSequence(vol) {
 
     after(SELF_TEST_END_AT, () => {
         tempDisplayActive = false;
+        // The next update tick (33-100ms) restarts the tone if a target is actually being read.
+        selfTestRunning = false;
     });
 }
 
@@ -458,12 +477,7 @@ function updateDisplay(data) {
     }
     if (data.power === false) {
         // Radar powered off — hard-stop all Doppler
-        if (dopplerSource) {
-            dopplerSource.stop();
-            dopplerSource.disconnect();
-            dopplerSource = null;
-        }
-        currentDopplerSpeed = null;
+        stopDopplerTone();
     } else if (data.dopplerSpeedMph !== undefined || data.dopplerVolume !== undefined) {
         const speed = data.dopplerSpeedMph;
         const vol = data.dopplerVolume ?? 1.0;
@@ -948,28 +962,39 @@ function exportButtonCSS() {
     console.log(css);
 }
 
-document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-        // Exit layout adjust first so remote overlay can stay open.
-        if (adjustMode) {
-            setAdjustMode(false);
-            fetch(`https://${GetParentResourceName()}/exitAdjustMode`, { method: 'POST', body: '{}' }).catch(() => {});
-        } else if (plateAdjustMode) {
-            const data = getPlatePositionData();
-            setPlateAdjustMode(false);
-            fetch(`https://${GetParentResourceName()}/exitPlateAdjustMode`, {
-                method: 'POST',
-                headers: NUI_JSON_HEADERS,
-                body: JSON.stringify(data || {}),
-            }).catch(() => {});
-        } else if (remoteAdjustMode) {
-            // Finish repositioning first so ESC doesn't also close the remote.
-            setRemoteAdjustMode(false);
-        } else if (remoteOpen) {
-            showRemote(false);
-            fetch(`https://${GetParentResourceName()}/closeRemote`, { method: 'POST', body: '{}' }).catch(() => {});
-        }
+/* With input passthrough on, the game may hand ESC to us as a forwarded message while the
+   browser also sees the keydown. Collapse the pair so one press takes one step down the
+   chain instead of two. */
+let lastEscapeAt = 0;
+
+function handleEscape() {
+    const now = Date.now();
+    if (now - lastEscapeAt < 200) return;
+    lastEscapeAt = now;
+
+    // Exit layout adjust first so remote overlay can stay open.
+    if (adjustMode) {
+        setAdjustMode(false);
+        fetch(`https://${GetParentResourceName()}/exitAdjustMode`, { method: 'POST', body: '{}' }).catch(() => {});
+    } else if (plateAdjustMode) {
+        const data = getPlatePositionData();
+        setPlateAdjustMode(false);
+        fetch(`https://${GetParentResourceName()}/exitPlateAdjustMode`, {
+            method: 'POST',
+            headers: NUI_JSON_HEADERS,
+            body: JSON.stringify(data || {}),
+        }).catch(() => {});
+    } else if (remoteAdjustMode) {
+        // Finish repositioning first so ESC doesn't also close the remote.
+        setRemoteAdjustMode(false);
+    } else if (remoteOpen) {
+        showRemote(false);
+        fetch(`https://${GetParentResourceName()}/closeRemote`, { method: 'POST', body: '{}' }).catch(() => {});
     }
+}
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') handleEscape();
 });
 
 window.addEventListener('message', (event) => {
@@ -1066,6 +1091,10 @@ window.addEventListener('message', (event) => {
             break;
         case 'hideRemote':
             showRemote(false);
+            break;
+        case 'escape':
+            // Forwarded from Lua because the game's ESC control is disabled while focused.
+            handleEscape();
             break;
     }
 });

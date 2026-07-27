@@ -481,8 +481,6 @@ body {
 #btn-speaker     { top: 56.9%; left: 44.5%; width: 10.9%; height: 6.0%; border-radius: 4px; }
 #btn-ps-blank    { top: 57.6%; left: 57.6%; width: 8.9%;  height: 5.0%; border-radius: 4px; }
 
-#btn-light       { top: 64.8%; left: 36.9%; width: 25.8%; height: 4.0%; border-radius: 12px; }
-
 /* Debug mode: show button hitboxes as red transparent with labels */
 .remote-wrap.debug .remote-btn {
     background: rgba(255, 0, 0, 0.3);

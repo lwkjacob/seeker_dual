@@ -77,6 +77,38 @@ ensure seeker_dual
 
 > **Note:** The remote overlay does not have a PWR button. Power is always controlled via the radar face click target, `/seeker_power`, or `Config.keybindPower`. When the remote is closed, NUI is not focused, so use the command or keybind instead of clicking.
 
+**Driving with the remote open:** the cursor is captured for the remote, but game input keeps
+flowing, so you can steer, accelerate, brake, handbrake and exit the vehicle normally. Only the
+inputs the mouse would otherwise hijack are suppressed while the cursor is up:
+
+| Suppressed | Why |
+|---|---|
+| Camera look (mouse) | Moving the cursor would drag the camera with it |
+| Attack / aim | Clicking a remote button would also fire |
+| Mouse vehicle steering | The mouse belongs to the remote, not the wheel |
+| Weapon switch / scroll | Scroll wheel scales the UI instead |
+| `ESC` | Belongs to the remote — see below. `P` still opens the pause menu |
+
+`ESC` steps back one level at a time: layout adjust → remote adjust → close the remote.
+
+### What the radar remembers
+
+Every operator setting is saved to KVP the moment you change it and restored on the next power-up
+— across power cycles, vehicle changes, and server reconnects. You set the unit up once.
+
+| Remembered | Not remembered |
+|---|---|
+| Antenna selection (`ANT`) and lane mode (`SAME/OPP`) | Power state — the unit always comes up off and self-tests |
+| `MOV STA` mode | Speed locks and plate locks (per-stop, cleared on power-off) |
+| `SEN` range, `PS` threshold | Transmit — `XMIT` comes up on so the radar is never silently dead |
+| `FAST LOCK`, `VOL`, `BLANK`, brightness | |
+| Doppler mode, plate reader visibility, speed unit | |
+| Radar / plate reader / remote position and scale | |
+
+Values in `shared/config.lua` and the `Radar` table in `client/radar.lua` are first-run defaults
+only. Once a player has saved settings, their KVP wins — editing a default will not change the
+setup of anyone who has already used the radar.
+
 ---
 
 ## Remote Buttons
@@ -95,7 +127,7 @@ Cycles the four operating modes: **Moving → Stationary Closing → Stationary 
 
 | Mode | Legend | Behavior |
 |------|--------|----------|
-| **Moving** | `[ ]` | Normal patrol operation — reads targets while you drive. The bracket sits in the patrol window until you have a speed to show, then the speed takes over. |
+| **Moving** | ` []` | Normal patrol operation — reads targets while you drive. The bracket sits in the patrol window until you have a speed to show, then the speed takes over. |
 | **Stationary Closing** | `SC` | Reports only targets **closing** on you. |
 | **Stationary Away** | `SA` | Reports only targets **moving away**. |
 | **Bi-Directional Stationary** | `S_` | Reports traffic in either direction. |
@@ -143,8 +175,8 @@ Cycles master beep/audio volume: **25% → 50% → 75% → 100%**.
 ### `BLANK`
 Toggles patrol speed blanking while a speed lock is held.
 
-### `LIGHT`
-Cycles display brightness: **Normal → Dim → Bright**.
+> **Display brightness** is not on the remote. Cycle it (Normal → Dim → Bright) from
+> `/seeker_settings` → **Display Brightness (LIGHT)**.
 
 ---
 
@@ -170,17 +202,21 @@ Cycles display brightness: **Normal → Dim → Bright**.
 
 **Doppler audio:** Pitch and volume ramp continuously — no stepped MPH bands. Controlled by `Config.dopplerPitch*` and `Config.dopplerVol*` in `shared/config.lua`.
 
-The tone is driven by the **speed difference** between the target and your patrol car, not the raw displayed speed — so how fast you are going changes the pitch:
+The tone is driven by how far the target is **above** your patrol speed, not the raw displayed speed — so how fast you are going changes the pitch:
 
-| Situation | Difference | Tone |
-|-----------|------------|------|
+| Situation | Over patrol | Tone |
+|-----------|-------------|------|
 | Stopped, target doing 75 | 75 mph | High — same as the displayed speed |
 | Doing 65, target doing 75 | 10 mph | Low |
 | Target pacing you | ~0 mph | Bottoms out at `Config.dopplerPitchMin` / `dopplerVolMin` |
+| Doing 80, target doing 75 | *(you are faster)* | One flat low tone — pinned to the same floor |
+| Stopped, target doing 130 | 130 mph | Maxed — the ramp tops out at `Config.dopplerPitchMaxSpeedMph` (`100`) |
 
-It is plain subtraction, magnitude only: direction doesn't matter, and an oncoming 75 mph car reads the same 10 mph difference as one ahead of you.
+Once your patrol speed passes the target's, the tone holds a single low note however far ahead you get. It does not climb back up as the gap widens — you are no longer closing on anything, so there is nothing for the pitch to track.
 
-The tone follows the **FAST** window whenever it holds a reading, and falls back to **TARGET** otherwise. Since FAST only fills with a vehicle faster than TARGET, this keeps the audio on the car being chased. While an antenna lock is applied the FAST window is frozen, so the tone uses that frozen speed — but patrol speed stays live, so slowing down still raises the pitch.
+Direction is ignored: an oncoming 75 mph car reads the same 10 mph over as one ahead of you.
+
+The tone always follows the **TARGET** window. A car showing in **FAST** never takes the audio over — FAST is a second readout, not a second receiver, so the tone stays on whatever the main window is tracking. Patrol speed is read live every tick, so slowing down raises the pitch even when the TARGET reading itself is not changing.
 
 `/toggledoppler` (or the settings menu entry) cycles three states:
 
