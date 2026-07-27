@@ -114,7 +114,9 @@ setup of anyone who has already used the radar.
 ## Remote Buttons
 
 ### `LOCK / REL`
-Acquires or releases a speed lock on the active antenna. Tries front first, then rear. On lock: plays lock tone and voice enunciator (antenna FRONT/REAR + target motion CLOSING/AWAY; the closing/away word is skipped if the target is pacing you). When FAST mode is on, the FAST window freezes to a second vehicle if one exists in the beam, or mirrors TARGET if only one vehicle is present.
+Acquires or releases a speed lock on the active antenna. Tries front first, then rear. On lock: plays lock tone and voice enunciator (antenna FRONT/REAR + target motion CLOSING/AWAY; the closing/away word is skipped if the target is pacing you). The FAST window freezes the locked speed; TARGET keeps reading live.
+
+This works whether `FAST LOCK` is on or off — that toggle only controls whether the unit reads a second vehicle, not the ability to lock a speed. With `FAST LOCK` **on**, the lock freezes a faster second vehicle if one exists in the beam, or mirrors TARGET if only one vehicle is present. With `FAST LOCK` **off**, the lock always freezes the TARGET speed — the unit isn't tracking a second vehicle in that mode, so it can't lock one.
 
 ### `ANT`
 Toggles the active transmit antenna: **Front ↔ Rear**. Exactly one antenna transmits at a time, matching the real unit — there is no "both" position. Feedback beeps: 1 = front, 2 = rear. Temporary display: `Fnt` / `rEA`. Pressing `ANT` also brings XMIT up, so switching antennas never leaves the radar silent.
@@ -184,8 +186,8 @@ Toggles patrol speed blanking while a speed lock is held.
 
 | Window | Description |
 |--------|-------------|
-| **TARGET** | Primary tracked vehicle speed. Selection method controlled by `Config.targetPriority` (`echo`, `hybrid`, `boresight`, or `strongest`). |
-| **FAST** | Fastest vehicle in the beam faster than TARGET (when FAST mode is on). Freezes on lock if a second vehicle is present. |
+| **TARGET** | Primary tracked vehicle speed, always live. Selection method controlled by `Config.targetPriority` (`echo`, `hybrid`, `boresight`, or `strongest`). |
+| **FAST** | Fastest vehicle in the beam faster than TARGET (when FAST mode is on). Holds the frozen speed on lock — with FAST mode off, this is all the window shows. |
 | **PATROL** | Officer's own vehicle speed, subject to PS threshold and blank settings. |
 
 **Icons:** `XMIT`, `FRONT`, `REAR`, `SAME`, `FAST`, `LOCK`, directional arrows.
@@ -385,6 +387,7 @@ Join our Discord for help: **https://discord.gg/XHrPvWVHRW** — open a ticket f
 
 - **WolfKnight98 (Dan)** — Creator of Wraith ARS 2X, which laid much of the technical foundation for FiveM radar resources. [GitHub](https://github.com/WolfKnight98)
 - **Opus49** — Developed an LSPDFR version of this concept and provided significant inspiration and features. [LCPDFR](https://www.lcpdfr.com/profile/104879-opus49/)
+- **J. Dean (Dean Fleet Supply)** — Contributed valuable expertise on the radar's real-world operation, helping ensure a more accurate and authentic implementation. [Website](https://deanfleetsupply.com)
 
 ---
 

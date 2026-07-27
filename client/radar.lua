@@ -592,11 +592,15 @@ local function fastestFasterThanPrimary(captured, primaryHit)
     return bestHit
 end
 
---- FAST window: snapshot when antenna lock is applied — faster second target if any, else mirror primary (single vehicle in beam).
+--- FAST window: snapshot when antenna lock is applied.
+--- Runs whether or not FAST LOCK is on. The two are separate features: FAST LOCK governs the
+--- live fastest-in-beam readout, while a speed lock always parks its captured speed here.
+--- With FAST LOCK on: the faster second target if one exists, else mirror TARGET (single vehicle
+--- in beam). With FAST LOCK off: always mirror TARGET — the unit isn't reading a second vehicle
+--- at all in that mode, so locking must not surface a speed the operator never had on screen.
 local function refreshFastLockedFrozenAtLock()
     Radar.fastLockedSpeed = nil
     Radar.fastLockedDir = nil
-    if not Radar.fastLockOn then return end
     if not (Radar.frontLocked or Radar.rearLocked) then return end
     local plyVeh = Player:GetVehicle()
     if not plyVeh then return end
@@ -606,18 +610,20 @@ local function refreshFastLockedFrozenAtLock()
     if not captured or #captured == 0 then return end
     local primary = getPrimaryTargetHitForFast(captured)
     if primary and primary.veh then
-        local other = fastestFasterThanPrimary(captured, primary)
         -- Stalker: FAST is the faster car vs a stronger TARGET; with only one vehicle, mirror TARGET into FAST so lock isn't blank.
         -- The arrows freeze with the speed, so they keep pointing at whichever vehicle the window is holding.
+        local other = Radar.fastLockOn and fastestFasterThanPrimary(captured, primary) or nil
         local frozen = other or primary
         Radar.fastLockedSpeed = frozen.speed
         Radar.fastLockedDir = directionFromRangeRate(frozen.rangeRate)
     end
 end
 
---- After toggling Fast Lock mode (remote/menu): refresh frozen FAST or clear when mode off.
+--- After toggling Fast Lock mode (remote/menu): re-snapshot so the window matches the new mode.
+--- A frozen lock reading survives the toggle — turning FAST LOCK off only stops the live
+--- fastest-in-beam readout, it does not release a speed the operator locked in.
 local function syncFastLockedAfterFastLockToggle()
-    if Radar.fastLockOn and (Radar.frontLocked or Radar.rearLocked) then
+    if Radar.frontLocked or Radar.rearLocked then
         refreshFastLockedFrozenAtLock()
     else
         Radar.fastLockedSpeed = nil
@@ -1189,17 +1195,19 @@ local function sendToNUI()
         end
     end
 
-    -- FAST window: frozen snapshot while antenna lock on; live fastest-in-beam faster than TARGET when unlocked.
-    if Radar.fastLockOn then
-        if Radar.frontLocked or Radar.rearLocked then
-            if Radar.fastLockedSpeed ~= nil then
-                fastValue = Utils.FormatSpeed(Utils.ConvertSpeed(Radar.fastLockedSpeed, Radar.speedUnit))
-                fastFrontArrow = (Radar.fastLockedDir == 'away')
-                fastRearArrow = (Radar.fastLockedDir == 'closing')
-            else
-                fastValue = Utils.FormatSpeedEmpty()
-            end
-        elseif #captured > 0 then
+    -- FAST window: frozen snapshot while an antenna lock is held; live fastest-in-beam faster than
+    -- TARGET when unlocked. The lock branch runs regardless of FAST LOCK — that toggle only
+    -- controls the live readout, so switching it off must not stop a lock from holding a speed.
+    if Radar.frontLocked or Radar.rearLocked then
+        if Radar.fastLockedSpeed ~= nil then
+            fastValue = Utils.FormatSpeed(Utils.ConvertSpeed(Radar.fastLockedSpeed, Radar.speedUnit))
+            fastFrontArrow = (Radar.fastLockedDir == 'away')
+            fastRearArrow = (Radar.fastLockedDir == 'closing')
+        else
+            fastValue = Utils.FormatSpeedEmpty()
+        end
+    elseif Radar.fastLockOn then
+        if #captured > 0 then
             local primary = getPrimaryTargetHitForFast(captured)
             if primary and primary.veh then
                 local other = fastestFasterThanPrimary(captured, primary)
