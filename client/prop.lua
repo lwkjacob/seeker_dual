@@ -161,6 +161,85 @@ CreateThread(function()
     end
 end)
 
+-- ── Screen glow ─────────────────────────────────────────────────────────────────────
+--
+-- The screen is a lit material: what renders is texture x world light. After dark that
+-- multiplier falls close to zero and the face goes black however bright the DUI page is —
+-- a texture channel caps at 1.0, so it can never out-run the multiply. Brightening the NUI
+-- side cannot fix this, and neither can the LIGHT setting.
+--
+-- So we hand the material some light instead. A small point light just in front of the face
+-- costs one native per frame and needs no changes to the model, unlike making the material
+-- emissive (which is the proper fix, and turns this off — see Config.radarProp.screenGlow).
+
+local glow = cfg.screenGlow or {}
+
+--- 0 in daylight, 1 in full dark, ramped across dawn and dusk so the screen does not pop the
+--- moment the hour ticks over. Clock-based rather than sampled from the renderer because
+--- there is no native that reports ambient light level.
+local function nightFactor()
+    local hour = GetClockHours() + GetClockMinutes() / 60.0
+    local dawn = glow.dawn or 6.0
+    local dusk = glow.dusk or 20.0
+    local ramp = glow.rampHours or 1.5
+
+    if ramp <= 0.0 then
+        return (hour <= dawn or hour >= dusk) and 1.0 or 0.0
+    end
+
+    if hour <= dawn or hour >= dusk then return 1.0 end
+    if hour < dawn + ramp then return 1.0 - (hour - dawn) / ramp end
+    if hour > dusk - ramp then return 1.0 - (dusk - hour) / ramp end
+    return 0.0
+end
+
+CreateThread(function()
+    if glow.enabled == false then return end
+
+    local off = glow.offset or {}
+    -- Defaults mirror the shipped config: -y is out in front of the face, -z drops the light
+    -- off the top of the housing and down onto the screen itself.
+    local ox, oy, oz = off.x or 0.0, off.y or -0.08, off.z or -0.035
+    local colour = glow.colour or {}
+    local r, g, b = colour.r or 150, colour.g or 210, colour.b or 255
+    local range = glow.range or 0.60
+    local intensity = glow.intensity or 2.0
+    local lead = glow.leadFrames or 1.0
+
+    while true do
+        -- Powered off means every window is blank, so there is nothing to light up. Checking
+        -- it here also means the glow follows the radar rather than the prop.
+        local lit = propEntity and DoesEntityExist(propEntity) and Radar and Radar.power
+
+        if lit then
+            local factor = nightFactor()
+            if factor > 0.01 then
+                local pos = GetOffsetFromEntityInWorldCoords(propEntity, ox, oy, oz)
+
+                -- The matrix we just read is where the prop finished LAST frame, but this
+                -- light is drawn into the frame the game is about to render. Standing still
+                -- that does not matter; at 60 mph one frame is most of half a metre, and the
+                -- glow visibly trails the unit. Advancing it along the vehicle's velocity by
+                -- one frame of travel puts it back on the screen where it belongs.
+                if lead ~= 0.0 and propVehicle and DoesEntityExist(propVehicle) then
+                    local vel = GetEntityVelocity(propVehicle)
+                    local dt = GetFrameTime() * lead
+                    pos = vector3(pos.x + vel.x * dt, pos.y + vel.y * dt, pos.z + vel.z * dt)
+                end
+
+                DrawLightWithRange(pos.x, pos.y, pos.z, r, g, b, range, intensity * factor)
+                Wait(0)
+            else
+                -- Daylight. Re-check on the minute rather than per frame; the ramp only
+                -- moves as fast as the game clock does.
+                Wait(1000)
+            end
+        else
+            Wait(500)
+        end
+    end
+end)
+
 AddEventHandler('onResourceStop', function(resource)
     if resource == GetCurrentResourceName() then deleteProp() end
 end)

@@ -151,6 +151,32 @@ Config.radarProp = {
     -- when you step out.
     unmountDistance = 150.0,
 
+    -- The unit's screen is a lit material, so what you see is texture x world light.
+    -- At night that lands near zero and the screen goes black — turning up LIGHT can't
+    -- fix it, because the texture can't get brighter than the light hitting it. So we
+    -- put a small light in front of the screen after dark. Only glows when powered.
+    --
+    -- Set enabled = false if you make the screen material emissive in the model.
+    screenGlow = {
+        enabled = true,
+
+        offset = { x = 0.0, y = -0.10, z = 0.00 },
+
+        range = 0.20,     -- metres — keep it tight or it lights the whole dashboard
+        intensity = 1.0,  -- at full dark, fading towards dawn and dusk
+
+        colour = { r = 255, g = 255, b = 255 },
+
+        -- Don't Change
+        leadFrames = 1.0,
+
+        -- Game clock. Full strength before dawn and after dusk, fading over rampHours
+        -- so the screen doesn't pop the moment the hour ticks over.
+        dawn = 6.0,
+        dusk = 20.0,
+        rampHours = 1.5,
+    },
+
     -- How far the unit moves per keypress in /seekerplace. Hold SHIFT for the fine step.
     moveStep = 0.02,        -- metres
     moveStepFine = 0.002,

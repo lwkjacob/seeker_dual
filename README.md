@@ -200,6 +200,27 @@ Grant the admin permission in `server.cfg`:
 add_ace group.admin seeker_dual.place allow
 ```
 
+### If the screen is dark at night
+
+The unit's screen is a normal lit material, so what you see is the texture **times the world
+light**. After dark that lands near zero and the screen goes black. Turning up `LIGHT` won't
+fix it — the texture can't get brighter than the light falling on it, so there's nothing the
+display side can do about it.
+
+`Config.radarProp.screenGlow` puts a small light in front of the screen after dark to give the
+material something to catch. It only glows while the radar is powered, and fades in across
+dusk rather than snapping on. Tune it in-game:
+
+- Glow lagging behind the unit while driving — nudge `leadFrames` up from `1.0`.
+- Glow sitting above the screen — lower `offset.z` (more negative).
+- Hotspot in the middle of the screen — move `offset.y` further out (more negative).
+- Whole dashboard lifting with it — drop `range`.
+- Still too dark — raise `intensity`.
+
+The proper fix is an emissive (unlit) material on the screen in `radar.ydr`, which makes the
+screen render at full brightness in any lighting. If you re-export the model that way, set
+`screenGlow.enabled = false`.
+
 ### Running on the dash unit alone
 
 `/seekerhide` hides the on-screen radar and plate reader while everything keeps running —
