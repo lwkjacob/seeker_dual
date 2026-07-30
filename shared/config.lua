@@ -167,7 +167,7 @@ Config.alpr = {
     --   'none'      off — plates are still read, just never run
     --   'cde'       CDE CAD (setup below)
     --   'imperial'  ImperialCAD (setup below)
-    provider = 'cde',
+    provider = 'none',
 
     radius       = 25.0,  -- how far around the car plates are read, in metres
     rescanDelay  = 300,   -- seconds before the same plate is read again
