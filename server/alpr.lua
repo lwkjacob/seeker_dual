@@ -424,6 +424,7 @@ end
 
 local inFlight   = {}  -- ['src|plate'] = true, so a plate is only ever being asked about once
 local rateWindow = {}  -- [src] = { count, resetAt }
+local lastForced = {}  -- [plate] = unix time of the last lock-driven lookup, server-wide
 
 --- How long the client sits on a plate it could not get an answer for. Without a backoff the
 --- next scan pass — 200 ms later by default — would ask again, and a CAD that is down or
@@ -466,7 +467,13 @@ local function deliver(src, plate, direction, record)
     sendResult(src, out)
 end
 
-RegisterNetEvent('seeker_dual:runAlpr', function(plate, direction)
+--- `force` is set when the operator locked this plate by hand rather than the scanner picking
+--- it up in passing. A deliberate lock is a decision point — the officer is about to act on
+--- what comes back — so it skips the cache and asks the CAD, even if the plate was answered
+--- for a minute ago. Background scanning keeps using the cache; that staleness is the price of
+--- not hammering the CAD with ambient traffic, and it is only acceptable because this path
+--- exists.
+RegisterNetEvent('seeker_dual:runAlpr', function(plate, direction, force)
     local src = source
 
     local provider = providers[ALPR.provider]
@@ -475,8 +482,34 @@ RegisterNetEvent('seeker_dual:runAlpr', function(plate, direction)
     plate = type(plate) == 'string' and plate:gsub('%s+', ''):upper() or ''
     if plate == '' or plate == '--------' or #plate > 16 then return end
     if type(direction) ~= 'string' or #direction > 32 then direction = '' end
+    force = force == true
 
-    local cached = cacheGet(plate)
+    -- Enforced here rather than trusting the client's own cooldown: `force` arrives over a net
+    -- event, so without this a spoofed one could bypass the cache on every scan pass. Demoting
+    -- to a normal cached lookup rather than dropping the request keeps a legitimate second lock
+    -- inside the window from going unanswered.
+    if force then
+        local cooldown = tonumber(ALPR.lockCooldown) or 0
+        if cooldown > 0 then
+            local last = lastForced[plate]
+            local now = os.time()
+            if last and (now - last) < cooldown then
+                force = false
+            else
+                -- Sweep anything past its cooldown while we're here; entries are dead weight
+                -- once expired and nothing else ever walks this table.
+                for p, t in pairs(lastForced) do
+                    if (now - t) >= cooldown then lastForced[p] = nil end
+                end
+                lastForced[plate] = now
+            end
+        end
+    end
+
+    -- A forced lookup still writes its answer to the cache on the way back, so a lock also
+    -- refreshes what the scanner will see next.
+    local cached = nil
+    if not force then cached = cacheGet(plate) end
     if cached == false then
         sendResult(src, { plate = plate, direction = direction, noRecord = true })
         return

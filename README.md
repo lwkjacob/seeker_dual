@@ -285,8 +285,11 @@ Config.alpr = {
 
 Results are cached so a unit sat in traffic doesn't hammer your CAD, and the cache survives a
 restart. The catch is staleness: a car reported stolen five minutes ago reads clean until its
-entry expires. Drop `cacheMinutes` if your CAD data moves fast, or clear it on demand with
-`exports.seeker_dual:ClearAlprCache()`. `/alprcache` in the server console shows what's in it.
+entry expires. **Locking a plate skips the cache and asks the CAD there and then**, so anything
+you're actually about to act on is current — at most once every `lockCooldown` seconds per
+plate, so re-locking the same car can't be used to poll your CAD. Drop `cacheMinutes` if your CAD data moves fast, or
+clear it with `exports.seeker_dual:ClearAlprCache()`. `/alprcache` in the server console shows
+what's in it.
 
 Lookups over `maxQueriesPerMinute` aren't lost — they're retried on a later pass, same as any
 lookup your CAD couldn't answer.

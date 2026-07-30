@@ -167,17 +167,19 @@ Config.alpr = {
     --   'none'      off — plates are still read, just never run
     --   'cde'       CDE CAD (setup below)
     --   'imperial'  ImperialCAD (setup below)
-    provider = 'none',
+    provider = 'cde',
 
     radius       = 25.0,  -- how far around the car plates are read, in metres
     rescanDelay  = 300,   -- seconds before the same plate is read again
     scanInterval = 200,   -- ms between scans
 
     -- How long a result is reused before asking the CAD again, in minutes. Both
-    -- CADs prefer this to constant lookups. The downside is staleness: a car
-    -- reported stolen five minutes ago still reads clean until this runs out.
-    -- Set to 0 to look up every single sighting.
-    cacheMinutes = 30,
+    -- Probably shouldn't change
+    cacheMinutes = 60,
+
+    -- Seconds before locking the same plate again asks the CAD fresh a second time.
+    -- Probably shouldn't change
+    lockCooldown = 120,
 
     -- Most lookups one player can run per minute, so a unit sat in traffic can't
     -- flood your CAD. Anything over the cap is retried later, not lost.

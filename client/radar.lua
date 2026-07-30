@@ -976,6 +976,10 @@ local function clearRearPlateLock()
     Radar.rearLockedPlateStyle = nil
 end
 
+--- Assigned down in the ALPR section, which owns the scan bookkeeping this needs to touch.
+--- Only ever called at runtime, long after the whole file has loaded.
+local runForcedAlpr
+
 --- Snapshot current target plate on `which` antenna ('front' | 'rear').
 local function acquirePlateLockFromAntenna(which)
     local plyVeh = Player:GetVehicle()
@@ -994,6 +998,7 @@ local function acquirePlateLockFromAntenna(which)
         end
         Radar.frontPlateLocked = true
         SendNUIMessage({ _type = 'audio', name = 'beep', vol = Radar.beepVolume or 1.0 })
+        runForcedAlpr(Radar.frontLockedPlate, 'Front Lock')
         return true
     end
     if which == 'rear' then
@@ -1008,6 +1013,7 @@ local function acquirePlateLockFromAntenna(which)
         end
         Radar.rearPlateLocked = true
         SendNUIMessage({ _type = 'audio', name = 'beep', vol = Radar.beepVolume or 1.0 })
+        runForcedAlpr(Radar.rearLockedPlate, 'Rear Lock')
         return true
     end
     return false
@@ -2051,6 +2057,7 @@ end)
 -- expires. Which CAD answers the query is entirely server/alpr.lua's business — this side only
 -- reads plates and renders whatever normalised record comes back.
 local alprScanned = {}   -- [plate] = gameTimer ms when last queried
+local alprLockLookups = {} -- [plate] = gameTimer ms of the last lock-driven CAD lookup
 local alprHitLog  = {}   -- session hit log, newest first, max 20
 
 RegisterCommand('alprlog', function()
@@ -2066,6 +2073,44 @@ RegisterCommand('alprlog', function()
         TriggerEvent('chat:addMessage', { args = { tostring(i), line } })
     end
 end, false)
+
+--- Locking a plate by hand is a deliberate act — the officer is about to pull the car over on
+--- what comes back — so it goes straight to the CAD instead of reading a result the scanner
+--- may have cached up to Config.alpr.cacheMinutes ago. Forward-declared above; see the plate
+--- lock handlers.
+---
+--- Marks the plate as scanned on the way out, so the background pass doesn't turn round and
+--- deliver a second notification for the same car off the freshly written cache entry.
+---
+--- Config.alpr.lockCooldown keeps re-locking the same car from becoming a way to poll the CAD.
+--- Inside the window the lock still runs, it just reads the cache like any other scan. The
+--- server enforces the same window — this side only saves the round trip.
+runForcedAlpr = function(plate, direction)
+    local alprCfg = Config.alpr
+    if not alprCfg or not alprCfg.provider or alprCfg.provider == 'none' then return end
+    if not Radar.power or not Radar.plateReaderEnabled then return end
+
+    plate = type(plate) == 'string' and plate:gsub('%s+', '') or ''
+    if plate == '' or plate == '--------' then return end
+
+    local now      = GetGameTimer()
+    local cooldown = (tonumber(alprCfg.lockCooldown) or 0) * 1000
+    local force    = true
+    if cooldown > 0 then
+        local last = alprLockLookups[plate]
+        if last and (now - last) < cooldown then
+            force = false
+        else
+            for p, t in pairs(alprLockLookups) do
+                if (now - t) >= cooldown then alprLockLookups[p] = nil end
+            end
+            alprLockLookups[plate] = now
+        end
+    end
+
+    alprScanned[plate] = now
+    TriggerServerEvent('seeker_dual:runAlpr', plate, direction, force)
+end
 
 CreateThread(function()
     while true do
