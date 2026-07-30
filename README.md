@@ -526,6 +526,7 @@ Join our Discord for help: **https://discord.gg/XHrPvWVHRW** — open a ticket f
 - **WolfKnight98 (Dan)** — Creator of Wraith ARS 2X, which laid much of the technical foundation for FiveM radar resources. [GitHub](https://github.com/WolfKnight98)
 - **Opus49** — Developed an LSPDFR version of this concept and provided significant inspiration and features. [LCPDFR](https://www.lcpdfr.com/profile/104879-opus49/)
 - **J. Dean (Dean Fleet Supply)** — Contributed valuable expertise on the radar's real-world operation, helping ensure a more accurate and authentic implementation. [Website](https://deanfleetsupply.com)
+- **Jakub** — Original Stalker Dual DSR Prop Creator, please contact me if I can link somewhere.
 
 ---
 
