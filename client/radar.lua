@@ -6,7 +6,8 @@
 Radar = {
     power = false,
     displayed = false,
-    hidden = false,
+    hidden = false,          -- automatic: pause menu / expanded map / no longer able to view
+    overlayHidden = false,   -- manual: /seekerhide. Screen only — the radar keeps running
     activeAntenna = 'front',  -- ANT: 'front' | 'rear'. Real DSR transmits on one antenna at a time — never both.
     frontXmit = false,        -- derived: activeAntenna == 'front' and transmitting
     rearXmit = false,         -- derived: activeAntenna == 'rear' and transmitting
@@ -1233,7 +1234,10 @@ local function sendToNUI()
     SendNUIMessage({
         _type = 'update',
         power = Radar.power,
-        displayed = Radar.displayed and not Radar.hidden,
+        -- Overlay visibility only. Everything else in this payload is computed the same way
+        -- whether or not the screen is up, which is what lets /seekerhide blank the overlay
+        -- while the prop's DUI keeps drawing — app.js ignores `displayed` in DUI mode.
+        displayed = Radar.displayed and not Radar.hidden and not Radar.overlayHidden,
         patrolSpeed = patrolFormatted,
         targetSpeed = targetSpeed,
         fastValue = fastValue,
@@ -1256,7 +1260,8 @@ local function sendToNUI()
         dopplerVolMax = Config.dopplerVolMax,
         dopplerVolMaxSpeedMph = Config.dopplerVolMaxSpeedMph,
         dopplerVolume = Radar.beepVolume or 1.0,
-        plateReaderVisible = Radar.plateReaderEnabled and Radar.displayed and not Radar.hidden and Radar.power,
+        plateReaderVisible = Radar.plateReaderEnabled and Radar.displayed and not Radar.hidden
+            and not Radar.overlayHidden and Radar.power,
         frontPlateText = Radar.frontPlateLocked and (Radar.frontLockedPlate or frontLivePlateText) or frontLivePlateText,
         rearPlateText = Radar.rearPlateLocked and (Radar.rearLockedPlate or rearLivePlateText) or rearLivePlateText,
         frontPlateStyle = Radar.frontPlateLocked and (Radar.frontLockedPlateStyle or frontLivePlateStyle) or frontLivePlateStyle,
@@ -1557,6 +1562,8 @@ end
 --- PWR / `/seeker_move` / remote "DSR UI": radar layout adjust (remote can stay open).
 local function beginRadarPositionAdjust()
     Radar.displayed = true
+    -- Positioning something you have hidden would leave the cursor up over an empty screen.
+    Radar.overlayHidden = false
     Radar.nuiLayoutAdjust = true
     sendToNUI()
     SendNUIMessage({ _type = 'adjustMode' })
@@ -1565,6 +1572,7 @@ end
 --- `/prmove` / remote "PR UI": plate layout adjust (remote can stay open).
 local function beginPlateReaderPositionAdjust()
     Radar.displayed = true
+    Radar.overlayHidden = false
     Radar.plateReaderEnabled = true
     saveSettings()
     Radar.nuiLayoutAdjust = true
@@ -1630,6 +1638,33 @@ RegisterCommand('togglepr', function()
     saveSettings()
     sendToNUI()
     lib.notify({ type = 'info', description = 'Plate reader: ' .. (Radar.plateReaderEnabled and 'ON' or 'OFF') })
+end, false)
+
+--- Blanks the on-screen overlay without touching the radar itself. Nothing else in the
+--- resource reads `overlayHidden`, so detection, locks, Doppler audio, ALPR and the prop's
+--- DUI screen all carry on exactly as before — this is a curtain over the HUD, not a power
+--- switch. Use it when you want the dash unit to be the only place you read speeds from.
+---
+--- Deliberately not saved to KVP: a player who hides the overlay and forgets would rejoin to
+--- a radar that looks broken, and the way out is a command they no longer remember.
+RegisterCommand('seekerhide', function()
+    Radar.overlayHidden = not Radar.overlayHidden
+
+    -- The remote is a separate overlay driven by its own show/hide messages, so it would be
+    -- left floating (with the cursor up) over a hidden radar. Closing it also releases NUI
+    -- focus, which is the behaviour you want when the point is to clear the screen.
+    if Radar.overlayHidden and remoteOpen then
+        closeRemote()
+    end
+
+    sendToNUI()
+
+    lib.notify({
+        type = 'info',
+        description = Radar.overlayHidden
+            and 'Radar overlay hidden — the unit is still running. /seekerhide to bring it back.'
+            or 'Radar overlay shown.',
+    })
 end, false)
 
 RegisterCommand('seeker_move', function()

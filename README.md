@@ -9,6 +9,7 @@ A FiveM police radar resource modeled after the **STALKER DUAL DSR** — a real-
 - Dual front/rear antenna system with independent control
 - Three speed windows: **TARGET**, **FAST**, and **PATROL**
 - Visual remote control overlay matching real STALKER hardware
+- Streamed in-vehicle radar prop with a live DUI screen (see [In-Vehicle Prop](#in-vehicle-prop))
 - License plate reader with per-antenna lock snapshots
 - Continuous ALPR system with CDE CAD integration (see [CDE CAD ALPR](#cde-cad-alpr))
 - Continuous Doppler audio (pitch and volume track target speed minus patrol speed), with an optional stationary-only mode
@@ -59,10 +60,13 @@ ensure seeker_dual
 | `/seeker_power` | Toggle radar power on/off |
 | `/toggledoppler` | Cycle Doppler audio: On → On (Stationary Only) → Off |
 | `/togglepr` | Toggle plate reader visibility |
+| `/seekerhide` | Hide/show the on-screen overlay. The radar keeps running — read it off the prop |
 | `/seeker_move` | Enter drag/scale mode for the radar display |
 | `/prmove` | Enter drag/scale mode for the plate reader |
 | `/seeker_radar_debug` | Toggle world-space ray geometry debug lines |
 | `/alprlog` | Print the last 20 flagged ALPR hits from the current session |
+| `/seekerplace [spawncode]` | **Admin.** Mount the radar prop in the vehicle you are sitting in |
+| `/seekerplace remove [spawncode]` | **Admin.** Delete the saved mount for the current vehicle model |
 
 ---
 
@@ -285,6 +289,130 @@ All settings live in `shared/config.lua`. Common values to adjust:
 | `Config.autoSelfTestInterval` | `600` | Seconds between automatic self-tests (used only when `autoSelfTest` is `true`) |
 | `Config.detectionZoneDebug` | `false` | Always show ray geometry (or use `/seeker_radar_debug`) |
 | `Config.remoteDebug` | `false` | Show remote button hitbox visualization |
+| `Config.radarProp.enabled` | `true` | `false` disables the prop and `/seekerplace` entirely |
+| `Config.radarProp.model` | `'radar'` | Streamed archetype from `stream/radar.ytyp` |
+| `Config.radarProp.textureDict/Name` | `radar` / `seeker_front` | Texture the DUI replaces |
+| `Config.radarProp.duiWidth/Height` | `715` / `230` | DUI surface — **keep the 715:230 ratio** |
+| `Config.radarProp.placeAce` | `seeker_dual.place` | Ace required for `/seekerplace` |
+| `Config.radarProp.unmountDistance` | `150.0` | Metres from the car before the unit unloads |
+| `Config.radarProp.defaultOffset` | *(see config)* | Starting offset for an unset vehicle |
+| `Config.radarProp.moveStep` | `0.02` | Metres per frame in the placement editor |
+
+---
+
+## In-Vehicle Prop
+
+`stream/radar.ydr` is a physical STALKER unit that mounts inside the vehicle. Its screen is not
+a texture — it is the radar UI itself, rendered live by DUI onto the model's `seeker_front`
+texture, so the prop shows the same TARGET / FAST / PATROL readout, indicator lamps, arrows and
+self-test sequence as the on-screen overlay.
+
+The prop's mounting position is stored per **vehicle spawncode**, server-side, in
+`data/prop_offsets.json`. One admin places it once on a `police3` and it sits in the right spot
+for every `police3` on the server. A vehicle model with no saved entry simply has no prop.
+
+### Placing the prop
+
+1. Get in the vehicle you want to set up. Any seat works; being parked helps.
+2. Run `/seekerplace`. A preview unit appears at the saved offset (or the config default).
+3. Nudge it into place:
+
+| Key | Action |
+|-----|--------|
+| `W` / `S` | Forward / back |
+| `A` / `D` | Left / right |
+| `E` / `Q` | Up / down |
+| `←` / `→` | Yaw |
+| `↑` / `↓` | Pitch |
+| `Z` / `X` | Roll |
+| `SHIFT` *(hold)* | Fine step — 2 mm and 0.1° instead of 2 cm and 1° |
+| Mouse | Look around — check the mount from the passenger side and the driver's eyeline |
+| `V` | Change camera — first person is the view that matters for a dashboard mount |
+| `ENTER` | Save for this vehicle model, server-wide |
+| `BACKSPACE` | Cancel |
+
+Driving and exiting are disabled while the editor is open, since the offset is read off the
+vehicle's own axes. Leaving the vehicle cancels the edit. The camera is left free.
+
+`/seekerplace remove` deletes the saved mount for the vehicle you are in.
+
+### Spawncodes
+
+Entries are keyed by spawncode, so `data/prop_offsets.json` can be read and hand-edited. The
+spawncode is worked out from the vehicle you are in and verified by hashing it back — if it
+does not match the model it is not used, so a wrong name can never write a mount onto a
+different vehicle.
+
+A few addons report a display label rather than their spawn name, and those fall back to a
+numeric hash key. The editor says so in amber at the top of the panel. Pass the name yourself
+to fix it:
+
+```
+/seekerplace police3
+/seekerplace remove police3
+```
+
+Either form keys the same vehicle *model*, not your particular car, so a hash-keyed entry
+already applies to everyone who spawns that vehicle — passing the spawncode only makes the
+file readable. Re-saving under the name does not remove the old hash entry; delete that line
+from `data/prop_offsets.json` if you want it tidy.
+
+### Admin permission
+
+Both the command and the save are gated behind an ace. Grant it in `server.cfg`:
+
+```cfg
+add_ace group.admin seeker_dual.place allow
+```
+
+The client-side check only makes the command fail fast — `server/props.lua` is the trust
+boundary, and it re-checks the ace and range-clamps the offset before anything is written or
+broadcast. Change the permission name with `Config.radarProp.placeAce`.
+
+### What the DUI can and cannot do
+
+Texture replacement in GTA is per **model**, not per entity: there is one `seeker_front`
+texture and every instance of the prop in the world draws the same DUI surface. The prop is
+therefore attached only to the vehicle **you** are sitting in, so the screen always shows your
+own radar. Other players walking past your car do not see a unit in it.
+
+Two consequences worth knowing:
+
+- `Config.radarProp.duiWidth` / `duiHeight` must stay at the artwork ratio **715:230** — the
+  native size of `seeker_dual_dsr_base.png` and of the `seeker_front` texture it replaces.
+  Any other ratio stretches the face across the model's UVs. Double both (1430×460) for a
+  sharper screen; `applyDuiScale()` in `nui/app.js` fits the layout to whatever you set.
+- The prop screen is muted. Beeps, voice enunciators and the Doppler tone all come from the
+  on-screen NUI — if the DUI page played them too you would hear everything twice.
+
+The unit stays mounted whether or not the radar is powered. When power is off every window
+blanks, so it simply reads dark, the way the real hardware does.
+
+It also stays bolted in after you step out — walk round the car and the unit is still on the
+dash with the screen live. It only comes off when the vehicle stops existing, when you walk
+more than `Config.radarProp.unmountDistance` (150 m) from it, or when you get into a different
+vehicle that has a mount of its own, since one player only ever carries one unit.
+
+### Running on the prop alone
+
+`/seekerhide` blanks the on-screen overlay and the plate reader without touching the radar.
+Detection, antenna locks, Doppler audio and ALPR all carry on — only the HUD goes away, so the
+dash unit becomes the only place you read speeds from. Run it again to bring the overlay back.
+
+The prop's screen is unaffected because `app.js` ignores the `displayed` flag in DUI mode; the
+same `update` messages keep arriving either way. The remote closes when you hide, since it is
+a separate overlay and would otherwise be left floating with the cursor up, and `/seeker_move`
+or `/prmove` un-hide automatically rather than asking you to position something invisible.
+
+The setting is per-session on purpose. It is not saved to KVP, so a rejoin always comes back
+with the overlay up — hiding it and forgetting looks exactly like a broken radar.
+
+### Model requirements
+
+If you swap in your own model, it needs an archetype in a `.ytyp` (referenced by the
+`DLC_ITYP_REQUEST` entry in `fxmanifest.lua`) and a texture for the screen face. Point
+`Config.radarProp.model`, `textureDict` and `textureName` at yours. For a texture embedded in a
+`.ydr` the TXD name matches the model name, which is why both default to `radar`.
 
 ---
 
@@ -374,6 +502,16 @@ exports.seeker_dual:IsPlayerRadarActive(source)   -- true if radar is active
 
 **Mouse cursor stuck after closing remote**
 - Restart the resource. Ensure no other resource is holding `SetNuiFocus(true, ...)`.
+
+**Prop screen is black**
+- If the housing is drawn but the face is black, the DUI texture is not bound. `AddReplaceTexture`
+  is registered against the streamed texture dictionary, and that dictionary unloads whenever the
+  last prop in the world is deleted — so the binding has to be re-applied on every mount, not once
+  per session. `SeekerDuiApplyTexture()` in `client/dui.lua` does this, and `SeekerDuiEnsure()`
+  calls it on every invocation; if you add another prop spawn path, call one of them straight
+  after `CreateObject`.
+- If it is black from the very first mount instead, check `Config.radarProp.textureDict` /
+  `textureName` actually match the dictionary and texture in your model.
 
 ---
 

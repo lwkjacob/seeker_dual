@@ -55,6 +55,43 @@ function initDigitDisplays() {
 }
 initDigitDisplays();
 
+/* DUI mode — the same page, loaded a second time by client/dui.lua with ?dui=1 and
+   rendered onto the `seeker_front` texture of the radar prop. The prop is the physical
+   unit, so it draws the radar face alone: no plate reader, no remote, no drag/scale.
+   Audio is muted here because the on-screen NUI is already playing every beep, voice
+   enunciator and the Doppler tone — unmuted, the player would hear all of it twice. */
+const DUI_MODE = new URLSearchParams(window.location.search).get('dui') === '1';
+/** .radar-container's native box. The whole layout is authored against these numbers. */
+const DUI_BASE_WIDTH = 400;
+const DUI_BASE_HEIGHT = 200;
+/** Native size of images/seeker_dual_dsr_base.png, and of the seeker_front texture it
+ *  replaces. `object-fit: contain` fits the artwork to this ratio inside the 2:1 box. */
+const DUI_ART_ASPECT = 715 / 230;
+
+/** Fits the radar face to the DUI surface. CSS cannot divide a viewport unit by a length,
+ *  so both the scale factor and the letterbox crop are computed here for the stylesheet. */
+function applyDuiScale() {
+    const scale = window.innerWidth / DUI_BASE_WIDTH;
+    // Height the artwork actually occupies inside the base box, and the empty strip above it.
+    const artHeight = DUI_BASE_WIDTH / DUI_ART_ASPECT;
+    const bar = (DUI_BASE_HEIGHT - artHeight) / 2;
+
+    const root = document.documentElement.style;
+    root.setProperty('--dui-scale', scale);
+    root.setProperty('--dui-shift', `${-bar * scale}px`);
+}
+
+if (DUI_MODE) {
+    document.body.classList.add('dui-mode');
+    applyDuiScale();
+    // Config.radarProp.duiWidth/duiHeight can change between sessions, and CEF reports the
+    // surface size late on a cold start, so the fit is recomputed rather than assumed.
+    window.addEventListener('resize', applyDuiScale);
+    // The prop screen has no show/hide of its own: the unit is bolted in the car whether
+    // or not it is powered, and reads dark when off because every window blanks.
+    container.classList.add('visible');
+}
+
 /** Self-test pass cue (nui/sounds/<name>.wav). Swap the file or this name to change it. */
 const SELF_TEST_PASS_SOUND = 'stupidfuckinghappysound';
 /** Trim applied on top of master volume. 0.6 ≈ -4.4 dB; lower it further to taste. */
@@ -72,10 +109,10 @@ function loadSounds() {
         audio.load();
     });
 }
-loadSounds();
+if (!DUI_MODE) loadSounds();
 
 function postRemoteAction(action) {
-    if (!action) return;
+    if (DUI_MODE || !action) return;
     fetch(`https://${GetParentResourceName()}/remoteBtn`, {
         method: 'POST',
         body: JSON.stringify({ action }),
@@ -90,15 +127,20 @@ if (radarPowerBtn) {
 }
 
 // Handshake so client can re-send persisted display config after NUI boot.
-fetch(`https://${GetParentResourceName()}/nuiReady`, {
-    method: 'POST',
-    body: '{}',
-}).catch(() => {});
+// Skipped in DUI mode: the prop screen has no saved layout, and a DUI page is not the
+// resource's NUI frame, so the callback would not resolve anyway.
+if (!DUI_MODE) {
+    fetch(`https://${GetParentResourceName()}/nuiReady`, {
+        method: 'POST',
+        body: '{}',
+    }).catch(() => {});
+}
 
 let voiceQueue = [];
 let voicePlaying = false;
 
 function playVoiceSequence(names, vol = 1.0) {
+    if (DUI_MODE) return;
     voiceQueue = [...names];
     voicePlaying = true;
     playNextVoice(vol);
@@ -211,6 +253,7 @@ function stopDopplerTone() {
 }
 
 function updateDoppler(speedMph, masterVolume = 1.0) {
+    if (DUI_MODE) return;
     const hasTarget = !selfTestRunning && speedMph !== null && speedMph !== undefined && speedMph >= 0;
 
     if (!dopplerCtx || !dopplerBuffer) return;
@@ -238,6 +281,7 @@ function updateDoppler(speedMph, masterVolume = 1.0) {
 }
 
 function playSound(name, vol = 1.0) {
+    if (DUI_MODE) return;
     if (!sounds[name]) return;
     let audio = sounds[name];
     if (audio.error) {
@@ -435,7 +479,7 @@ let tempDisplayActive = false;
 
 function updateDisplay(data) {
     if (!data) return;
-    if (data.displayed !== undefined) {
+    if (data.displayed !== undefined && !DUI_MODE) {
         container.classList.toggle('visible', !!data.displayed);
     }
     if (!tempDisplayActive) {
@@ -515,6 +559,7 @@ let plateScale = 1.0;
 const NUI_JSON_HEADERS = { 'Content-Type': 'application/json; charset=UTF-8' };
 
 function savePosition() {
+    if (DUI_MODE) return;
     const rect = container.getBoundingClientRect();
     const w = window.innerWidth;
     const h = window.innerHeight;
@@ -567,6 +612,7 @@ function getPlatePositionData() {
 }
 
 function savePlatePosition() {
+    if (DUI_MODE) return;
     requestAnimationFrame(() => {
         const data = getPlatePositionData();
         if (!data) return;
@@ -645,7 +691,7 @@ function applyRemotePosition(x, y, width, scaleVal) {
 
 function saveRemotePosition() {
     // Never persist a measurement taken while hidden — it would save 0,0.
-    if (!remoteIsMeasurable()) return;
+    if (DUI_MODE || !remoteIsMeasurable()) return;
     const rect = remoteWrap.getBoundingClientRect();
     const data = {
         x: rect.left / window.innerWidth,
@@ -997,9 +1043,16 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') handleEscape();
 });
 
+/* The only messages that change what is drawn on the radar face. client/dui.lua already
+   mirrors just these to the prop, so this is a second line of defence — it also keeps a
+   stray postMessage from putting the prop screen into layout-adjust or opening a remote
+   on a surface that has no cursor to close it with. */
+const DUI_ALLOWED_TYPES = new Set(['update', 'selfTest', 'tempDisplay']);
+
 window.addEventListener('message', (event) => {
     const data = event.data;
     if (!data || !data._type) return;
+    if (DUI_MODE && !DUI_ALLOWED_TYPES.has(data._type)) return;
 
     switch (data._type) {
         case 'init':

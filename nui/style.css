@@ -15,6 +15,55 @@ body {
     overflow: hidden;
 }
 
+/* ── DUI mode ────────────────────────────────────────────────────────────────
+   index.html?dui=1, rendered by client/dui.lua onto the `seeker_front` texture of
+   the radar prop. Everything that belongs to the screen overlay — plate reader,
+   remote, drag handles, the PWR click target — is dropped, and the radar face fills
+   the whole DUI surface.
+
+   Keep the DUI surface at the ARTWORK's aspect, 715:230 (Config.radarProp.duiWidth /
+   duiHeight) — that is the size of seeker_dual_dsr_base.png and of the seeker_front
+   texture it replaces. Any other ratio and the prop stretches the face across its UVs.
+
+   Opacity is deliberately NOT pinned here: updateDisplay() sets it inline from the
+   LIGHT brightness setting, and the prop screen should dim with the rest of the unit. */
+body.dui-mode {
+    background: #000;
+}
+
+body.dui-mode #plate-reader,
+body.dui-mode #remote-overlay,
+body.dui-mode .resize-handle,
+body.dui-mode .adjust-hint,
+body.dui-mode .radar-power-hit {
+    display: none !important;
+}
+
+/* The container keeps its native 400x200 box and is SCALED up, rather than stretched to
+   100vw/100vh. Positions in this file are percentages, but sizes are not — the digit font
+   is 1.8em, the digit gap is 2px — so a stretched box grows the artwork while leaving the
+   readout at overlay size. Scaling takes everything with it, and the face on the prop is a
+   pixel-exact enlargement of the overlay.
+
+   The container is 2:1 but the artwork is 715:230, so `object-fit: contain` letterboxes it
+   inside that box. On the overlay those bars are transparent and invisible; on the prop they
+   would waste a third of the screen. --dui-shift lifts the container so the artwork lands at
+   the top of the surface and the bars fall outside it (body overflow is already hidden).
+   Both variables are computed by applyDuiScale() in app.js. */
+body.dui-mode .radar-container {
+    display: block;
+    position: fixed;
+    left: 0 !important;
+    top: 0 !important;
+    right: auto !important;
+    bottom: auto !important;
+    width: 400px !important;
+    height: 200px !important;
+    transform: translateY(var(--dui-shift, 0px)) scale(var(--dui-scale, 1)) !important;
+    transform-origin: top left;
+    cursor: default;
+}
+
 .radar-container {
     position: fixed;
     bottom: 2rem;

@@ -14,7 +14,12 @@ shared_scripts {
 client_scripts {
     'client/utils.lua',
     'client/player.lua',
+    -- Must precede radar.lua: it wraps SendNUIMessage so every screen update also reaches
+    -- the DUI rendered on the radar prop. See the header comment in client/dui.lua.
+    'client/dui.lua',
     'client/radar.lua',
+    'client/prop.lua',
+    'client/place.lua',
     'client/exports.lua',
 }
 
@@ -22,20 +27,29 @@ server_scripts {
     'server/sync.lua',
     'server/exports.lua',
     'server/alpr.lua',
+    'server/props.lua',
 }
 
 escrow_ignore {
     'shared/config.lua',
     'client/utils.lua',
     'client/player.lua',
+    'client/dui.lua',
     'client/radar.lua',
+    'client/prop.lua',
+    'client/place.lua',
     'client/exports.lua',
     'server/sync.lua',
     'server/exports.lua',
     'server/alpr.lua',
+    'server/props.lua',
 }
 
 ui_page 'nui/index.html'
+
+-- Streamed radar prop. The stream/ folder is picked up automatically, but the archetype in
+-- radar.ytyp has to be requested explicitly or CreateObject('radar') finds nothing.
+data_file 'DLC_ITYP_REQUEST' 'stream/radar.ytyp'
 
 files {
     'nui/index.html',

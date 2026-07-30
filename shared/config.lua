@@ -137,6 +137,49 @@ Config.remoteDebug = false
 -- Debug: draw world lines for radar ray geometry (parallel beams + end caps). Toggle in-game with /seeker_radar_debug
 Config.detectionZoneDebug = false
 
+-- In-vehicle radar prop (stream/radar.ydr) with its screen rendered live by DUI.
+-- Per-vehicle mounting offsets are set in-game with /seekerplace and stored server-side in
+-- data/prop_offsets.json, keyed by vehicle spawncode — so one admin places it once and the
+-- unit sits in the right spot for everyone on that vehicle model.
+Config.radarProp = {
+    enabled = true,
+
+    -- Streamed archetype name from stream/radar.ytyp.
+    model = 'radar',
+
+    -- Embedded TXD + texture the DUI replaces. `seeker_front` is the screen face;
+    -- `seeker_main` (housing) and `seeker_spec` (specular) are left alone. For a texture
+    -- embedded in a .ydr the TXD name matches the model, which is why both read 'radar'.
+    textureDict = 'radar',
+    textureName = 'seeker_front',
+
+    -- DUI surface size in pixels. KEEP THE 715:230 RATIO — it is the native size of both
+    -- nui/images/seeker_dual_dsr_base.png and the seeker_front texture this replaces, so
+    -- anything else stretches the face across the model's UVs. Doubling both (1430x460)
+    -- gives a sharper screen at 4x the surface memory; the layout scales to fit either way.
+    duiWidth = 715,
+    duiHeight = 230,
+
+    -- Starting offset for /seekerplace when the vehicle model has no saved entry yet.
+    -- Local to the vehicle: +y forward, +x right, +z up. Rotation in degrees.
+    defaultOffset = { x = -0.30, y = 0.35, z = 0.62, rx = 0.0, ry = 0.0, rz = 0.0 },
+
+    -- Ace permission required to run /seekerplace and write offsets. Grant with:
+    --   add_ace group.admin seeker_dual.place allow
+    placeAce = 'seeker_dual.place',
+
+    -- How far you can walk from the mounted vehicle before the unit is unloaded, in metres.
+    -- It stays bolted in when you step out — this only exists so a vehicle that unstreams
+    -- while you are across the map does not leave a prop floating where it used to be.
+    unmountDistance = 150.0,
+
+    -- Nudge steps for the /seekerplace editor. Hold SHIFT for the fine step.
+    moveStep = 0.02,      -- metres per frame while a move key is held
+    moveStepFine = 0.002,
+    rotateStep = 1.0,     -- degrees per frame while a rotate key is held
+    rotateStepFine = 0.1,
+}
+
 -- KVP keys for persistence (DO NOT EDIT UNLESS YOU KNOW WHAT YOUR DOING)
 Config.kvpDisplay = 'seeker_dual_display'
 Config.kvpPlateDisplay = 'seeker_dual_plate_display'

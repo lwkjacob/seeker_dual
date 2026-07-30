@@ -4,6 +4,7 @@ local function buildRadarState()
         power = Radar.power,
         displayed = Radar.displayed,
         hidden = Radar.hidden,
+        overlayHidden = Radar.overlayHidden,
         activeAntenna = Radar.activeAntenna,
         frontXmit = Radar.frontXmit,
         rearXmit = Radar.rearXmit,
@@ -36,8 +37,10 @@ exports('IsRadarActive', function()
     return Radar.power and (Radar.frontXmit or Radar.rearXmit)
 end)
 
+--- Whether the overlay is actually on screen. `/seekerhide` counts as not displayed — the
+--- radar itself is still running, which is what IsRadarActive reports.
 exports('IsRadarDisplayed', function()
-    return Radar.displayed and not Radar.hidden
+    return Radar.displayed and not Radar.hidden and not Radar.overlayHidden
 end)
 
 exports('CanControlRadar', function()
