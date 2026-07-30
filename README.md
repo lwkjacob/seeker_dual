@@ -1,36 +1,19 @@
 # seeker_dual
 
-A FiveM police radar resource modeled after the **STALKER DUAL DSR** — a real-world dual-antenna traffic radar used by law enforcement. Designed for roleplay servers where officers conduct traffic enforcement with realistic hardware workflow.
+A FiveM police radar built to work like the real **STALKER DUAL DSR** — dual antennas, three
+speed windows, plate reader, and a physical unit on your dash.
 
----
-
-## Features
-
-- Dual front/rear antenna system with independent control
-- Three speed windows: **TARGET**, **FAST**, and **PATROL**
-- Visual remote control overlay matching real STALKER hardware
-- Streamed in-vehicle radar prop with a live DUI screen (see [In-Vehicle Prop](#in-vehicle-prop))
-- License plate reader with per-antenna lock snapshots
-- Continuous ALPR system with CDE CAD integration (see [CDE CAD ALPR](#cde-cad-alpr))
-- Continuous Doppler audio (pitch and volume track target speed minus patrol speed), with an optional stationary-only mode
-- Physics-based vehicle detection (ray tracing, echo modeling, Gaussian beam pattern)
-- Self-test sequence on power-up
-- Persistent per-player layout and settings via KVP
-- Server-side state bag exports for external resource integration
-
----
-
-## Requirements
-
-- [`ox_lib`](https://github.com/overextended/ox_lib)
+The included **`manual.pdf`** is the operator's manual for the real hardware. If you want the
+deep end on how the radar behaves, read that. This file covers setup and the FiveM side.
 
 ---
 
 ## Installation
 
-1. Place `seeker_dual` in your server resources folder.
-2. Ensure `ox_lib` is started before this resource.
-3. Add to `server.cfg`:
+Requires [`ox_lib`](https://github.com/overextended/ox_lib).
+
+1. Drop `seeker_dual` in your resources folder.
+2. Add to `server.cfg`:
 
 ```cfg
 ensure ox_lib
@@ -39,485 +22,350 @@ ensure seeker_dual
 
 ---
 
-## Default Keybinds
+## Keybinds
 
 | Key | Action |
 |-----|--------|
-| `F5` | Open / close remote overlay (`Config.defaultKeybind`) |
-| `NUMPAD 8` | Toggle front antenna speed lock |
-| `NUMPAD 2` | Toggle rear antenna speed lock |
-| `NUMPAD 7` | Snapshot front antenna plate lock |
-| `NUMPAD 1` | Snapshot rear antenna plate lock |
-| *(unbound)* | Power toggle — set via `Config.keybindPower` |
-
----
+| `F5` | Open / close the remote |
+| `NUMPAD 8` / `NUMPAD 2` | Lock front / rear speed |
+| `NUMPAD 7` / `NUMPAD 1` | Lock front / rear plate |
+| *(unbound)* | Power — set one with `Config.keybindPower` |
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `/seeker_settings` | Open the settings menu (power, units, antenna, layout, reset) |
-| `/seeker_power` | Toggle radar power on/off |
-| `/toggledoppler` | Cycle Doppler audio: On → On (Stationary Only) → Off |
-| `/togglepr` | Toggle plate reader visibility |
-| `/seekerhide` | Hide/show the on-screen overlay. The radar keeps running — read it off the prop |
-| `/seeker_move` | Enter drag/scale mode for the radar display |
-| `/prmove` | Enter drag/scale mode for the plate reader |
-| `/seeker_radar_debug` | Toggle world-space ray geometry debug lines |
-| `/alprlog` | Print the last 20 flagged ALPR hits from the current session |
-| `/seekerplace [spawncode]` | **Admin.** Mount the radar prop in the vehicle you are sitting in |
-| `/seekerplace remove [spawncode]` | **Admin.** Delete the saved mount for the current vehicle model |
+| `/seeker_settings` | Settings menu — power, units, antenna, layout, reset |
+| `/seeker_power` | Power on/off |
+| `/toggledoppler` | Doppler audio: On → On (Stationary Only) → Off |
+| `/togglepr` | Show/hide the plate reader |
+| `/seekerhide` | Hide the on-screen radar and read it off the dash unit instead |
+| `/seeker_move` | Move and resize the radar |
+| `/prmove` | Move and resize the plate reader |
+| `/alprlog` | Last 20 flagged ALPR hits this session |
+| `/seekerplace [spawncode]` | **Admin.** Mount the dash unit in the vehicle you're in |
+| `/seekerplace remove` | **Admin.** Delete the mount for this vehicle model |
+| `/seeker_radar_debug` | Draw the radar beam in the world (debug) |
 
 ---
 
-## Basic Workflow
+## Using it
 
-1. Enter a valid police-class vehicle (default: class `18`).
-2. Press `F5` to open the remote overlay.
-3. Click the **PWR** area on the radar face to power on — or use `/seeker_power` / your configured keybind.
-4. The radar runs a self-test, then begins tracking.
-5. Use remote buttons to control antennas, modes, sensitivity, and locking.
-6. Press PWR again (or command/keybind) to power off. All lock state clears on power-off.
+1. Get in a police vehicle.
+2. Press `F5` for the remote.
+3. Click **PWR** on the radar face to power on. The unit self-tests, then starts tracking.
+4. Work the remote buttons as you would the real unit.
 
-> **Note:** The remote overlay does not have a PWR button. Power is always controlled via the radar face click target, `/seeker_power`, or `Config.keybindPower`. When the remote is closed, NUI is not focused, so use the command or keybind instead of clicking.
+Power off clears all locks.
 
-**Driving with the remote open:** the cursor is captured for the remote, but game input keeps
-flowing, so you can steer, accelerate, brake, handbrake and exit the vehicle normally. Only the
-inputs the mouse would otherwise hijack are suppressed while the cursor is up:
+> **PWR is not on the remote**, same as the real hardware — it's on the radar face. With the
+> remote closed you can't click it, so use `/seeker_power` or set `Config.keybindPower`.
 
-| Suppressed | Why |
-|---|---|
-| Camera look (mouse) | Moving the cursor would drag the camera with it |
-| Attack / aim | Clicking a remote button would also fire |
-| Mouse vehicle steering | The mouse belongs to the remote, not the wheel |
-| Weapon switch / scroll | Scroll wheel scales the UI instead |
-| `ESC` | Belongs to the remote — see below. `P` still opens the pause menu |
+**You can drive with the remote open.** Steering, throttle, brake and exiting all still work.
+Only the mouse-driven inputs are taken over: camera look, attack/aim, mouse steering, and the
+scroll wheel (it scales the UI). `ESC` steps back one level at a time — layout adjust, then
+remote adjust, then closes the remote. `P` still opens the pause menu.
 
-`ESC` steps back one level at a time: layout adjust → remote adjust → close the remote.
+### What it remembers
 
-### What the radar remembers
+Every operator setting saves the moment you change it and comes back on next power-up, across
+vehicle changes and reconnects. Set the unit up once.
 
-Every operator setting is saved to KVP the moment you change it and restored on the next power-up
-— across power cycles, vehicle changes, and server reconnects. You set the unit up once.
+**Saved:** antenna and lane mode, `MOV STA`, `SEN`, `PS`, `FAST LOCK`, `VOL`, `BLANK`,
+brightness, Doppler mode, plate reader visibility, speed unit, and where you put everything
+on screen.
 
-| Remembered | Not remembered |
-|---|---|
-| Antenna selection (`ANT`) and lane mode (`SAME/OPP`) | Power state — the unit always comes up off and self-tests |
-| `MOV STA` mode | Speed locks and plate locks (per-stop, cleared on power-off) |
-| `SEN` range, `PS` threshold | Transmit — `XMIT` comes up on so the radar is never silently dead |
-| `FAST LOCK`, `VOL`, `BLANK`, brightness | |
-| Doppler mode, plate reader visibility, speed unit | |
-| Radar / plate reader / remote position and scale | |
+**Not saved:** power (always comes up off and self-tests), speed and plate locks (cleared on
+power off), and `XMIT` (always comes up on, so the radar is never silently dead).
 
-Values in `shared/config.lua` and the `Radar` table in `client/radar.lua` are first-run defaults
-only. Once a player has saved settings, their KVP wins — editing a default will not change the
-setup of anyone who has already used the radar.
+Settings in `shared/config.lua` are first-run defaults only — once a player has used the radar,
+their own saved settings win.
 
 ---
 
-## Remote Buttons
+## The remote
 
-### `LOCK / REL`
-Acquires or releases a speed lock on the active antenna. Tries front first, then rear. On lock: plays lock tone and voice enunciator (antenna FRONT/REAR + target motion CLOSING/AWAY; the closing/away word is skipped if the target is pacing you). The FAST window freezes the locked speed; TARGET keeps reading live.
+| Button | What it does |
+|--------|--------------|
+| `LOCK / REL` | Locks or releases a speed on the active antenna. Plays the lock tone and calls out the antenna and whether the target is closing or moving away. FAST freezes the locked speed; TARGET keeps reading live. |
+| `ANT` | Switches the transmitting antenna, front ↔ rear. Only one transmits at a time, like the real unit. Also turns XMIT on, so switching never leaves you silent. |
+| `XMIT` | Transmit on/off. The antenna has to be transmitting to see anything. |
+| `MOV STA` | Cycles Moving → Stationary Closing → Stationary Away → Bi-Directional. |
+| `SAME / OPP` | Lane mode for the current antenna: Off → Same → Opposite → Both. |
+| `FAST LOCK` | Turns the FAST window on/off. This is *not* a speed lock — use `LOCK/REL`. |
+| `SEN` | Detection range: 100 → 200 → 300 → 400 → 500. |
+| `PS` | Lowest patrol speed that will show in the patrol window. |
+| `TEST` | Runs the self-test on demand (about 6 seconds, ends in `PASS`). |
+| `VOL` | Volume: 25% → 50% → 75% → 100%. |
+| `BLANK` | Blanks patrol speed while a lock is held. |
 
-This works whether `FAST LOCK` is on or off — that toggle only controls whether the unit reads a second vehicle, not the ability to lock a speed. With `FAST LOCK` **on**, the lock freezes a faster second vehicle if one exists in the beam, or mirrors TARGET if only one vehicle is present. With `FAST LOCK` **off**, the lock always freezes the TARGET speed — the unit isn't tracking a second vehicle in that mode, so it can't lock one.
+`LOCK/REL` works whether `FAST LOCK` is on or off. With it on, the lock grabs a faster second
+vehicle if there's one in the beam; with it off, it locks the TARGET speed.
 
-### `ANT`
-Toggles the active transmit antenna: **Front ↔ Rear**. Exactly one antenna transmits at a time, matching the real unit — there is no "both" position. Feedback beeps: 1 = front, 2 = rear. Temporary display: `Fnt` / `rEA`. Pressing `ANT` also brings XMIT up, so switching antennas never leaves the radar silent.
+Display brightness isn't on the remote — it's in `/seeker_settings`.
 
-### `XMIT`
-Toggles transmit on/off for the selected antenna. The antenna choice is remembered while XMIT is off, so switching back on returns to the same antenna. The antenna must be transmitting to detect targets.
+### Stationary modes
 
-### `MOV STA`
-Cycles the four operating modes: **Moving → Stationary Closing → Stationary Away → Bi-Directional Stationary**.
+| Mode | Shows | Reads |
+|------|-------|-------|
+| Moving | ` []` | Normal patrol — targets while you drive |
+| Stationary Closing | `SC` | Only traffic coming towards you |
+| Stationary Away | `SA` | Only traffic moving away |
+| Bi-Directional | `S_` | Traffic either way |
 
-| Mode | Legend | Behavior |
-|------|--------|----------|
-| **Moving** | ` []` | Normal patrol operation — reads targets while you drive. The bracket sits in the patrol window until you have a speed to show, then the speed takes over. |
-| **Stationary Closing** | `SC` | Reports only targets **closing** on you. |
-| **Stationary Away** | `SA` | Reports only targets **moving away**. |
-| **Bi-Directional Stationary** | `S_` | Reports traffic in either direction. |
-
-All legends live in the **patrol window**, and pressing the button flashes the new one there for two seconds. The `S_` bar sits on the bottom segment: stock Segment7Standard draws underscore on the *middle* bar (the same glyph as `-` and `:`), so the bundled `nui/font/Segment7Standard.otf` ships a patched underscore shifted down to the bottom row. Swapping in a stock copy of that font moves the bar back to the middle. The three stationary modes hold their legend the entire time they are selected — they never show a patrol speed, since they require the patrol car parked (detection pauses above ~2.2 mph).
-
-The direction filter uses closing speed, so a target pacing you inside `Config.closingDeadbandMph` has no usable direction and is ignored by `SC` and `SA` — `S_` still reports it. Filtering happens at capture, so TARGET, FAST and the plate reader all see the same filtered set.
-
-### `SAME / OPP`
-Cycles the lane mode for the selected antenna: **OFF → Same-lane → Opposite-lane → Both**.
-
-### `FAST LOCK`
-Toggles the FAST window on/off. When on, the FAST window shows the fastest vehicle in the beam that is faster than TARGET (subject to config filters). This is not a speed lock — use `LOCK/REL` or the numpad keybinds to lock a speed.
-
-### `SEN`
-Cycles the radar's maximum detection range: **100 → 200 → 300 → 400 → 500** (units configurable via `Config.antennaRangeMin` / `Config.antennaRangeMax`). Current value shown briefly on the TARGET window.
-
-### `PS`
-Cycles the patrol speed display threshold (default steps: `1`, `5`, `20` mph). Current value shown briefly.
-
-### `TEST`
-Runs the self-test sequence on demand. The same sequence runs automatically on power-up, and on
-`Config.autoSelfTestInterval` when `Config.autoSelfTest` is enabled. Pressing `TEST` while a sequence is
-running restarts it. The auto timer counts only while the radar is powered, and resets on power toggle
-and antenna switch.
-
-| Stage | TARGET | FAST | PATROL | Meaning |
-|---|---|---|---|---|
-| Lamp test | `888` | `888` | `888` | Every segment and indicator lit |
-| Battery | `bAt` | `139` | — | Supply voltage, 13.9 V |
-| Temperature | `107` | `°F` | — | Internal temperature, 107 °F |
-| Display check | `10` / `35` / `65` | — | `10` / `35` / `65` | Test speeds stepped through both speed windows |
-| Result | `PAS` | `S` | — | Reads `PASS` across the two windows, then the pass chime |
-
-The whole run takes about 6.3 seconds. Values are fixed — they are a display check, not live telemetry.
-
-The pass sound is `nui/sounds/stupidfuckinghappysound.wav`, played at master volume trimmed by
-`SELF_TEST_PASS_GAIN` (`0.6`). To swap it, drop in a
-new file, point `SELF_TEST_PASS_SOUND` in `nui/app.js` at its name, and add it to `files {}` in
-`fxmanifest.lua` — the manifest lists every NUI asset explicitly, and an undeclared file fails to load silently.
-
-### `VOL`
-Cycles master beep/audio volume: **25% → 50% → 75% → 100%**.
-
-### `BLANK`
-Toggles patrol speed blanking while a speed lock is held.
-
-> **Display brightness** is not on the remote. Cycle it (Normal → Dim → Bright) from
-> `/seeker_settings` → **Display Brightness (LIGHT)**.
+The legend sits in the patrol window. The three stationary modes need the patrol car parked and
+never show a patrol speed. A car pacing you has no clear direction, so `SC` and `SA` skip it —
+`S_` still reads it.
 
 ---
 
-## Display Windows
+## The display
 
-| Window | Description |
-|--------|-------------|
-| **TARGET** | Primary tracked vehicle speed, always live. Selection method controlled by `Config.targetPriority` (`echo`, `hybrid`, `boresight`, or `strongest`). |
-| **FAST** | Fastest vehicle in the beam faster than TARGET (when FAST mode is on). Holds the frozen speed on lock — with FAST mode off, this is all the window shows. |
-| **PATROL** | Officer's own vehicle speed, subject to PS threshold and blank settings. |
+| Window | Shows |
+|--------|-------|
+| **TARGET** | The main vehicle in the beam, always live |
+| **FAST** | The fastest vehicle in the beam if it's faster than TARGET. Holds the frozen speed on lock. |
+| **PATROL** | Your own speed |
 
-**Icons:** `XMIT`, `FRONT`, `REAR`, `SAME`, `FAST`, `LOCK`, directional arrows.
+**Arrows.** Each speed window has its own pair. Down = the car is closing on you, up = it's
+moving away, neither = it's pacing you. They show how that car is moving, not which antenna
+saw it — the `FRONT` / `REAR` icons already tell you that.
 
-**Directional arrows:** There are two pairs — one beside `TARGET`, one beside `FAST`. Each pair reports how the vehicle *in its own window* is moving along the beam, not which antenna picked it up — the antenna is already shown by the `FRONT` / `REAR` icons. A pair goes dark whenever its window is blank, and the `FAST` pair freezes with the `FAST` reading on lock.
+**Doppler audio.** The tone tracks how far the target is *above your own speed*, not the number
+on the display:
 
-| Arrow | Meaning |
-|-------|---------|
-| **Down** (`rear`) | Vehicle is **closing** — range to the patrol car is shrinking. An oncoming car in opposite mode, or a slower car ahead you are catching in same mode. |
-| **Up** (`front`) | Vehicle is **moving away** — range is growing. A car pulling away ahead of you, or one you have already passed. |
-| *(neither)* | Vehicle is pacing you, so closing speed sits inside the deadband. Tune with `Config.closingDeadbandMph` (default `1.5` mph). |
+| Situation | Tone |
+|-----------|------|
+| Parked, target doing 75 | High |
+| Doing 65, target doing 75 | Low — only 10 over you |
+| Target pacing you, or you're faster than it | Flat, bottomed out |
 
-> The `FAST` pair's element ids and PNG filenames still read `lock_*_arrow` for historical reasons; they no longer follow the antenna lock.
+So slowing down raises the pitch on its own. The tone always follows TARGET, never FAST, and
+direction doesn't matter — an oncoming car sounds the same as one ahead of you.
 
-**Doppler audio:** Pitch and volume ramp continuously — no stepped MPH bands. Controlled by `Config.dopplerPitch*` and `Config.dopplerVol*` in `shared/config.lua`.
-
-The tone is driven by how far the target is **above** your patrol speed, not the raw displayed speed — so how fast you are going changes the pitch:
-
-| Situation | Over patrol | Tone |
-|-----------|-------------|------|
-| Stopped, target doing 75 | 75 mph | High — same as the displayed speed |
-| Doing 65, target doing 75 | 10 mph | Low |
-| Target pacing you | ~0 mph | Bottoms out at `Config.dopplerPitchMin` / `dopplerVolMin` |
-| Doing 80, target doing 75 | *(you are faster)* | One flat low tone — pinned to the same floor |
-| Stopped, target doing 130 | 130 mph | Maxed — the ramp tops out at `Config.dopplerPitchMaxSpeedMph` (`100`) |
-
-Once your patrol speed passes the target's, the tone holds a single low note however far ahead you get. It does not climb back up as the gap widens — you are no longer closing on anything, so there is nothing for the pitch to track.
-
-Direction is ignored: an oncoming 75 mph car reads the same 10 mph over as one ahead of you.
-
-The tone always follows the **TARGET** window. A car showing in **FAST** never takes the audio over — FAST is a second readout, not a second receiver, so the tone stays on whatever the main window is tracking. Patrol speed is read live every tick, so slowing down raises the pitch even when the TARGET reading itself is not changing.
-
-`/toggledoppler` (or the settings menu entry) cycles three states:
-
-| State | Behavior |
-|-------|----------|
-| **On** | Tone plays whenever there is a target, moving or parked. |
-| **On (Stationary Only)** | Tone plays only while the patrol car is stopped, and cuts out as soon as you roll. Threshold is `Config.dopplerStationaryMaxMph` (default `2.0`), so idle creep doesn't chop the audio. |
-| **Off** | No Doppler tone. |
+`/toggledoppler` cycles **On** → **On (Stationary Only)** (cuts out as soon as you roll) →
+**Off**. It starts off.
 
 ---
 
-## Moving & Scaling the UI
+## Moving things around
 
-The radar display, plate reader, and remote all support free placement per player. Layout saves
-automatically via KVP and restores on next session.
+Everything is per-player and saves automatically.
 
-**While the remote is open:**
-- Drag either panel to reposition
-- Scroll wheel to scale
-- Corner handle on the radar to resize
+**With the remote open:** drag the radar or plate reader to move, scroll to scale, drag the
+corner handle to resize.
 
-**The remote itself:**
-- **Double-click the remote body** (anywhere that isn't a button) to start moving it — a dashed
-  outline appears and the buttons go inert so a drag can't trigger a radar action
-- Drag to move, scroll wheel to scale (0.5×–2×)
-- **Double-click again** to finish and save, or press `ESC`
+**The remote itself:** double-click it anywhere that isn't a button to start moving it — the
+buttons go inert so you can't set something off by accident. Drag to move, scroll to scale,
+double-click again or press `ESC` to save.
 
-Buttons are excluded from the double-click that *starts* adjust mode, so normal button presses behave
-exactly as before. Once adjusting, a double-click anywhere on the remote exits.
-
-**Via commands:**
-- `/seeker_move` — enter drag/scale/resize mode for the radar (`ESC` to exit and save)
-- `/prmove` — same for the plate reader
-- `/seeker_settings` → **Adjust Display Position** — opens the same adjust UI
-- `/seeker_settings` → **Reset Remote Position** — re-centers the remote at default size
+**Or use commands:** `/seeker_move`, `/prmove`, or `/seeker_settings` → *Adjust Display
+Position*. `/seeker_settings` → *Reset Remote Position* puts the remote back in the middle.
 
 ---
 
-## Configuration
+## The dash unit
 
-All settings live in `shared/config.lua`. Common values to adjust:
+A physical radar that mounts in the car, with a live screen showing the same readouts as the
+on-screen display. It stays put when you get out, and reads dark when the radar is off.
 
-| Key | Default | Description |
-|-----|---------|-------------|
-| `Config.defaultKeybind` | `'F5'` | Remote open/close key |
-| `Config.keybindPower` | `''` | Optional power toggle key (empty = disabled) |
-| `Config.keybindLockFront/Rear` | `NUMPAD8/2` | Speed lock keybinds |
-| `Config.keybindPlateLockFront/Rear` | `NUMPAD7/1` | Plate lock keybinds |
-| `Config.speedUnit` | `'mph'` | `'mph'` or `'kmh'` |
-| `Config.antennaMaxDist` | `350.0` | Fallback max detection range |
-| `Config.antennaRangeMin/Max` | `100` / `500` | SEN cycle bounds |
-| `Config.sameSensitivity` | `0.6` | Same-lane ray reach multiplier (0.2–1.0) |
-| `Config.oppSensitivity` | `0.6` | Opposite-lane ray reach multiplier |
-| `Config.targetPriority` | `'echo'` | Target selection: `echo`, `hybrid`, `boresight`, `strongest` |
-| `Config.radarRayForwardOffsetM` | `2.75` | Ray origin forward offset from vehicle center (meters) |
-| `Config.maxTargetVerticalDelta` | `10.0` | Max vertical separation to target (meters); `0` disables |
-| `Config.strictShapeTestLos` | `false` | Strict ray LOS test; leave `false` unless tuning ray flags |
-| `Config.fastRequiresFasterThanTarget` | `true` | FAST must be strictly faster than TARGET |
-| `Config.fastMaxDistanceBeyondPrimaryM` | `70.0` | FAST must be within this range of TARGET |
-| `Config.closingDeadbandMph` | `1.5` | Closing speed below this lights neither directional arrow |
-| `Config.dopplerStationaryMaxMph` | `2.0` | Patrol speed counted as "stopped" in Doppler stationary-only mode |
-| `Config.allowedVehicleClasses` | `{18}` | Vehicle classes that can use the radar |
-| `Config.autoSelfTest` | `false` | `true` re-runs the self-test on a timer while powered on |
-| `Config.autoSelfTestInterval` | `600` | Seconds between automatic self-tests (used only when `autoSelfTest` is `true`) |
-| `Config.detectionZoneDebug` | `false` | Always show ray geometry (or use `/seeker_radar_debug`) |
-| `Config.remoteDebug` | `false` | Show remote button hitbox visualization |
-| `Config.radarProp.enabled` | `true` | `false` disables the prop and `/seekerplace` entirely |
-| `Config.radarProp.model` | `'radar'` | Streamed archetype from `stream/radar.ytyp` |
-| `Config.radarProp.textureDict/Name` | `radar` / `seeker_front` | Texture the DUI replaces |
-| `Config.radarProp.duiWidth/Height` | `715` / `230` | DUI surface — **keep the 715:230 ratio** |
-| `Config.radarProp.placeAce` | `seeker_dual.place` | Ace required for `/seekerplace` |
-| `Config.radarProp.unmountDistance` | `150.0` | Metres from the car before the unit unloads |
-| `Config.radarProp.defaultOffset` | *(see config)* | Starting offset for an unset vehicle |
-| `Config.radarProp.moveStep` | `0.02` | Metres per frame in the placement editor |
+You only see the unit in your own car — that's a GTA limitation, not a setting.
 
----
+### Placing it
 
-## In-Vehicle Prop
+Position is saved per **vehicle model**, server-wide. One admin sets up a `police3` and it's
+right for every `police3` on the server. Vehicles nobody has set up simply have no unit.
 
-`stream/radar.ydr` is a physical STALKER unit that mounts inside the vehicle. Its screen is not
-a texture — it is the radar UI itself, rendered live by DUI onto the model's `seeker_front`
-texture, so the prop shows the same TARGET / FAST / PATROL readout, indicator lamps, arrows and
-self-test sequence as the on-screen overlay.
-
-The prop's mounting position is stored per **vehicle spawncode**, server-side, in
-`data/prop_offsets.json`. One admin places it once on a `police3` and it sits in the right spot
-for every `police3` on the server. A vehicle model with no saved entry simply has no prop.
-
-### Placing the prop
-
-1. Get in the vehicle you want to set up. Any seat works; being parked helps.
-2. Run `/seekerplace`. A preview unit appears at the saved offset (or the config default).
-3. Nudge it into place:
+1. Sit in the vehicle and run `/seekerplace`.
+2. Nudge it into place:
 
 | Key | Action |
 |-----|--------|
-| `W` / `S` | Forward / back |
-| `A` / `D` | Left / right |
+| `W` `A` `S` `D` | Forward / back / left / right |
 | `E` / `Q` | Up / down |
-| `←` / `→` | Yaw |
-| `↑` / `↓` | Pitch |
-| `Z` / `X` | Roll |
-| `SHIFT` *(hold)* | Fine step — 2 mm and 0.1° instead of 2 cm and 1° |
-| Mouse | Look around — check the mount from the passenger side and the driver's eyeline |
-| `V` | Change camera — first person is the view that matters for a dashboard mount |
-| `ENTER` | Save for this vehicle model, server-wide |
+| `←` `→` `↑` `↓` `Z` `X` | Rotate |
+| `SHIFT` *(hold)* | Fine steps |
+| Mouse / `V` | Look around, change camera — check it from the driver's eyeline |
+| `ENTER` | Save for this vehicle model |
 | `BACKSPACE` | Cancel |
 
-Driving and exiting are disabled while the editor is open, since the offset is read off the
-vehicle's own axes. Leaving the vehicle cancels the edit. The camera is left free.
+You can't drive while placing, and getting out cancels it.
 
-`/seekerplace remove` deletes the saved mount for the vehicle you are in.
+If the editor warns that it couldn't work out your vehicle's spawn name, pass it yourself:
+`/seekerplace police3`. Either way it applies to everyone in that model.
 
-### Spawncodes
-
-Entries are keyed by spawncode, so `data/prop_offsets.json` can be read and hand-edited. The
-spawncode is worked out from the vehicle you are in and verified by hashing it back — if it
-does not match the model it is not used, so a wrong name can never write a mount onto a
-different vehicle.
-
-A few addons report a display label rather than their spawn name, and those fall back to a
-numeric hash key. The editor says so in amber at the top of the panel. Pass the name yourself
-to fix it:
-
-```
-/seekerplace police3
-/seekerplace remove police3
-```
-
-Either form keys the same vehicle *model*, not your particular car, so a hash-keyed entry
-already applies to everyone who spawns that vehicle — passing the spawncode only makes the
-file readable. Re-saving under the name does not remove the old hash entry; delete that line
-from `data/prop_offsets.json` if you want it tidy.
-
-### Admin permission
-
-Both the command and the save are gated behind an ace. Grant it in `server.cfg`:
+Grant the admin permission in `server.cfg`:
 
 ```cfg
 add_ace group.admin seeker_dual.place allow
 ```
 
-The client-side check only makes the command fail fast — `server/props.lua` is the trust
-boundary, and it re-checks the ace and range-clamps the offset before anything is written or
-broadcast. Change the permission name with `Config.radarProp.placeAce`.
+### Running on the dash unit alone
 
-### What the DUI can and cannot do
-
-Texture replacement in GTA is per **model**, not per entity: there is one `seeker_front`
-texture and every instance of the prop in the world draws the same DUI surface. The prop is
-therefore attached only to the vehicle **you** are sitting in, so the screen always shows your
-own radar. Other players walking past your car do not see a unit in it.
-
-Two consequences worth knowing:
-
-- `Config.radarProp.duiWidth` / `duiHeight` must stay at the artwork ratio **715:230** — the
-  native size of `seeker_dual_dsr_base.png` and of the `seeker_front` texture it replaces.
-  Any other ratio stretches the face across the model's UVs. Double both (1430×460) for a
-  sharper screen; `applyDuiScale()` in `nui/app.js` fits the layout to whatever you set.
-- The prop screen is muted. Beeps, voice enunciators and the Doppler tone all come from the
-  on-screen NUI — if the DUI page played them too you would hear everything twice.
-
-The unit stays mounted whether or not the radar is powered. When power is off every window
-blanks, so it simply reads dark, the way the real hardware does.
-
-It also stays bolted in after you step out — walk round the car and the unit is still on the
-dash with the screen live. It only comes off when the vehicle stops existing, when you walk
-more than `Config.radarProp.unmountDistance` (150 m) from it, or when you get into a different
-vehicle that has a mount of its own, since one player only ever carries one unit.
-
-### Running on the prop alone
-
-`/seekerhide` blanks the on-screen overlay and the plate reader without touching the radar.
-Detection, antenna locks, Doppler audio and ALPR all carry on — only the HUD goes away, so the
-dash unit becomes the only place you read speeds from. Run it again to bring the overlay back.
-
-The prop's screen is unaffected because `app.js` ignores the `displayed` flag in DUI mode; the
-same `update` messages keep arriving either way. The remote closes when you hide, since it is
-a separate overlay and would otherwise be left floating with the cursor up, and `/seeker_move`
-or `/prmove` un-hide automatically rather than asking you to position something invisible.
-
-The setting is per-session on purpose. It is not saved to KVP, so a rejoin always comes back
-with the overlay up — hiding it and forgetting looks exactly like a broken radar.
-
-### Model requirements
-
-If you swap in your own model, it needs an archetype in a `.ytyp` (referenced by the
-`DLC_ITYP_REQUEST` entry in `fxmanifest.lua`) and a texture for the screen face. Point
-`Config.radarProp.model`, `textureDict` and `textureName` at yours. For a texture embedded in a
-`.ydr` the TXD name matches the model name, which is why both default to `radar`.
+`/seekerhide` hides the on-screen radar and plate reader while everything keeps running —
+detection, locks, audio and ALPR all carry on, you just read speeds off the dash. Run it again
+to bring the display back. It always comes back on rejoin.
 
 ---
 
-## CDE CAD ALPR
+## ALPR
 
-The ALPR system continuously scans vehicles around the patrol vehicle and queries [CDE CAD](https://cdecad.com) for registration data. It mirrors real 4-camera ALPR hardware — no manual plate lock required.
+Reads the plates of cars around you and runs them through your CAD automatically — no manual
+plate lock. **Only flagged vehicles raise an alert**; clean plates stay silent.
 
-**Only flagged vehicles trigger a notification.** All-clear plates are silently ignored.
+Two GTA notifications per hit (plate, vehicle and direction, then owner, statuses and flags),
+plus an audio cue. ALPR only runs while the plate reader is on (`/togglepr`).
 
 ### Alerts
 
-| Flag | Condition |
-|------|-----------|
-| Stolen Vehicle | Vehicle marked stolen in CDE CAD |
-| Impounded Vehicle | Vehicle marked impounded in CDE CAD |
-| Expired Registration | Registration invalid or not active |
-| No Insurance | Insurance missing or marked invalid |
+| Flag | Meaning |
+|------|---------|
+| Stolen Vehicle | Marked stolen in the CAD |
+| Impounded Vehicle | Marked impounded in the CAD |
+| Expired Registration | Registration not valid or active |
+| No Insurance | Insurance missing or invalid |
+| *CAD flags* | Anything else your CAD returns — warrants, BOLOs, dangerous or missing person, your own custom flags (CDE CAD only) |
 
-Each alert fires two GTA notifications: plate + vehicle + direction, then owner + statuses + flags. An `alpr_hit.wav` audio cue plays for every alert. The ALPR only runs while the plate reader is enabled (`/togglepr`).
+Custom flags come through as-is, so a flag you add in the CAD shows up in game without touching
+this resource.
 
-### Setup
+### Setup — CDE CAD
 
-1. Generate a FiveM API key from your CDE CAD **Admin Panel → System Integrations → FiveM API Key**.
-2. Set `enabled = true` and paste your key in `shared/config.lua`:
+Your credentials go in `server.cfg`, not in the config file. Most communities already have these
+set from CDE's own resource.
+
+1. Generate a FiveM API key in your CDE CAD **Admin Panel → FiveM Settings**.
+2. Add to `server.cfg`:
+
+   ```cfg
+   ##CDECAD
+   set CDE_CAD_API_URL      "https://your-cdecad-instance.com/api"
+   set CDE_CAD_API_KEY      "fvm_your_api_key"
+   set CDE_CAD_COMMUNITY_ID "your-discord-guild-id"
+   ```
+
+3. Set `Config.alpr.provider = 'cde'` in `shared/config.lua`.
+
+### Setup — ImperialCAD
+
+Runs through the ImperialCAD resource, so seeker_dual never handles your API key.
+
+1. Install and start [`ImperialCAD`](https://docs.imperialcad.app).
+2. Put your credentials (**Admin Panel → Settings → API**) at the top of `server.cfg`, above
+   `ensure ImperialCAD`:
+
+   ```cfg
+   setr imperial_community_id "yourCommunityId"
+   set imperialAPI "yourApiKey"
+   ```
+
+3. Set `Config.alpr.provider = 'imperial'` in `shared/config.lua`.
+
+ImperialCAD doesn't return a vehicle's make, model or colour, so those alerts show the plate and
+flags only. It has no impound field either — a registration status containing "impound" is what
+raises the impound flag. Business-owned plates are marked `(Business)`.
+
+### Scan settings
 
 ```lua
-Config.cdeCad = {
-    enabled          = true,
-    apiKey           = 'fvm_yourKeyHere',
-    alprRadius       = 25.0,   -- scan radius in meters
-    alprRescanDelay  = 300,    -- seconds before same plate is re-queried
-    alprScanInterval = 200,    -- ms between scan passes
+Config.alpr = {
+    provider = 'cde',          -- 'none' | 'cde' | 'imperial'
 
-    -- Optional: Discord webhook for flagged hits
-    discordWebhook     = '',
+    radius       = 25.0,       -- how far around you plates are read, in metres
+    rescanDelay  = 300,        -- seconds before the same plate is read again
+    scanInterval = 200,        -- ms between scans
+    cacheMinutes = 60,         -- how long a result is reused; 0 looks up every sighting
+
+    maxQueriesPerMinute = 60,  -- per-player limit; 0 for no limit
+
+    discordWebhook     = '',   -- posts flagged hits to Discord
     discordWebhookName = 'ALPR System',
 }
 ```
 
-### Discord Webhook
+Results are cached so a unit sat in traffic doesn't hammer your CAD, and the cache survives a
+restart. The catch is staleness: a car reported stolen five minutes ago reads clean until its
+entry expires. Drop `cacheMinutes` if your CAD data moves fast, or clear it on demand with
+`exports.seeker_dual:ClearAlprCache()`. `/alprcache` in the server console shows what's in it.
 
-When `discordWebhook` is set, every flagged ALPR hit posts an embed to your Discord channel. The embed includes plate, direction, vehicle description, owner, and a list of active flags. Embeds are red for stolen/impounded vehicles and yellow for registration/insurance issues. All-clear plates never touch the webhook.
+Lookups over `maxQueriesPerMinute` aren't lost — they're retried on a later pass, same as any
+lookup your CAD couldn't answer.
+
+### Discord
+
+Set `discordWebhook` and every flagged hit posts an embed with the plate, direction, vehicle,
+owner and flags — red for stolen or impounded, yellow for registration and insurance problems.
+Clean plates never post.
+
+---
+
+## Configuration
+
+Everything lives in `shared/config.lua`, commented in place. The ones worth knowing about:
+
+| Setting | Default | What it does |
+|---------|---------|--------------|
+| `Config.speedUnit` | `'mph'` | `'mph'` or `'kmh'` |
+| `Config.allowedVehicleClasses` | `{18}` | Which vehicles can use the radar |
+| `Config.defaultKeybind` | `'F5'` | Remote key |
+| `Config.keybindPower` | `''` | Power key — unset by default |
+| `Config.antennaMaxDist` | `1000.0` | How far the antennas can see |
+| `Config.antennaRangeMin/Max` | `100` / `500` | The `SEN` range steps |
+| `Config.sameSensitivity` / `oppSensitivity` | `0.6` | Sensitivity per lane mode, 0.2–1.0 |
+| `Config.targetPriority` | `'echo'` | Which car takes the TARGET window |
+| `Config.closingDeadbandMph` | `1.5` | How much closing speed lights an arrow |
+| `Config.dopplerStationaryMaxMph` | `2.0` | Speed that still counts as parked for Doppler |
+| `Config.autoSelfTest` | `false` | Re-run the self-test on a timer |
+| `Config.radarProp.enabled` | `true` | `false` removes the dash unit and `/seekerplace` |
+| `Config.radarProp.placeAce` | `seeker_dual.place` | Permission for `/seekerplace` |
+| `Config.alpr.provider` | `'none'` | Which CAD runs plates — see [ALPR](#alpr) |
 
 ---
 
 ## Exports
 
-### Client
-
 ```lua
-exports.seeker_dual:GetRadarState()           -- Full state table
-exports.seeker_dual:IsRadarActive()           -- true if power on + transmitting
-exports.seeker_dual:IsRadarDisplayed()        -- true if radar UI is visible
-exports.seeker_dual:CanControlRadar()         -- true if in a valid police vehicle
-```
+-- Client
+exports.seeker_dual:GetRadarState()               -- full state table
+exports.seeker_dual:IsRadarActive()               -- powered and transmitting
+exports.seeker_dual:IsRadarDisplayed()            -- radar is on screen
+exports.seeker_dual:CanControlRadar()             -- in a valid vehicle
 
-### Server
-
-```lua
+-- Server
 exports.seeker_dual:GetPlayerRadarState(source)   -- {power, frontXmit, rearXmit}
-exports.seeker_dual:IsPlayerRadarActive(source)   -- true if radar is active
+exports.seeker_dual:IsPlayerRadarActive(source)
+exports.seeker_dual:ClearAlprCache()              -- drop every cached plate lookup
 ```
 
 ---
 
 ## Troubleshooting
 
-**Remote/radar won't open**
-- Confirm you are in an allowed vehicle class (`Config.allowedVehicleClasses`).
-- Confirm `ox_lib` is running and started before `seeker_dual`.
+**Remote won't open** — you need to be in an allowed vehicle class, and `ox_lib` has to start
+before `seeker_dual`.
 
-**TARGET window stays blank / no targets**
-- XMIT must be **on**. If both antennas have transmit off, no targets are processed.
-- Check that the correct antenna is active for your direction (front detects ahead, rear detects behind).
-- If `Config.strictShapeTestLos = true` was set and targets disappeared, revert to `false`.
+**No targets** — `XMIT` must be on, and the right antenna has to be selected for the direction
+you're looking (front reads ahead, rear reads behind).
 
-**No Doppler audio**
-- Doppler is disabled by default. Cycle it on with `/toggledoppler`.
-- If it plays parked but stops the moment you drive, it is in **On (Stationary Only)** — press `/toggledoppler` again to reach **Off**, or once more for plain **On**.
-- Verify sound files exist in `nui/sounds/`.
+**No Doppler audio** — it's off by default. Cycle it on with `/toggledoppler`. If it plays
+parked but stops when you drive, it's in *Stationary Only* — press again twice for plain On.
 
-**Display position resets**
-- Exit layout mode with `ESC` to trigger a save. Confirm no other script is clearing KVP.
+**Power does nothing** — the remote is closed, so the PWR area can't be clicked. Use
+`/seeker_power` or set a keybind.
 
-**Power does nothing with the remote closed**
-- Expected — NUI is unfocused, so the radar face click target won't register. Use `/seeker_power` or set `Config.keybindPower`.
+**Cursor stuck after closing the remote** — restart the resource, and check no other script is
+holding NUI focus.
 
-**Mouse cursor stuck after closing remote**
-- Restart the resource. Ensure no other resource is holding `SetNuiFocus(true, ...)`.
+**Dash unit screen is black** — check `Config.radarProp.textureDict` and `textureName` match
+your model. If it only happens on some cars, it's the mount, not the screen.
 
-**Prop screen is black**
-- If the housing is drawn but the face is black, the DUI texture is not bound. `AddReplaceTexture`
-  is registered against the streamed texture dictionary, and that dictionary unloads whenever the
-  last prop in the world is deleted — so the binding has to be re-applied on every mount, not once
-  per session. `SeekerDuiApplyTexture()` in `client/dui.lua` does this, and `SeekerDuiEnsure()`
-  calls it on every invocation; if you add another prop spawn path, call one of them straight
-  after `CreateObject`.
-- If it is black from the very first mount instead, check `Config.radarProp.textureDict` /
-  `textureName` actually match the dictionary and texture in your model.
+**Layout keeps resetting** — press `ESC` to leave layout mode, which is what saves it.
 
 ---
 
 ## Support
 
-Join our Discord for help: **https://discord.gg/XHrPvWVHRW** — open a ticket for support.
+Discord: **https://discord.gg/XHrPvWVHRW** — open a ticket.
 
 ---
 

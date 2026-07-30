@@ -1,122 +1,119 @@
 Config = {}
 
--- Keybind to open the radar settings menu
-Config.defaultKeybind = 'F5'
+-- ── Keybinds ──────────────────────────────────────────────────────────────
+-- Set any of these to '' to disable.
 
--- Keybinds for quick lock (optional, set to '' to disable)
-Config.keybindLockFront = 'NUMPAD8'
-Config.keybindLockRear = 'NUMPAD2'
+Config.defaultKeybind = 'F5'            -- open the remote
+Config.keybindPower = ''                -- power on/off without the remote
 
--- Keybinds for quick plate lock aliases (optional, set to '' to disable)
--- These trigger the same front/rear lock logic used by radar lock.
-Config.keybindPlateLockFront = 'NUMPAD7'
-Config.keybindPlateLockRear = 'NUMPAD1'
+Config.keybindLockFront = 'NUMPAD8'     -- lock front speed
+Config.keybindLockRear = 'NUMPAD2'      -- lock rear speed
+Config.keybindPlateLockFront = 'NUMPAD7' -- lock front plate
+Config.keybindPlateLockRear = 'NUMPAD1'  -- lock rear plate
 
--- Speed unit: 'mph' or 'kmh'
-Config.speedUnit = 'mph'
+-- ── General ───────────────────────────────────────────────────────────────
 
--- Maximum detection distance for antennas (game units)
-Config.antennaMaxDist = 1000.00
+Config.speedUnit = 'mph'                -- 'mph' or 'kmh'
+Config.allowedVehicleClasses = { 18 }   -- who can use the radar (18 = emergency)
 
--- Ray origin is shifted this many meters forward along the vehicle (+local Y) from the entity origin.
--- Reduces bogus hits from traffic crossing your hood / cabin; tune per vehicle class if needed.
+-- ── Detection ─────────────────────────────────────────────────────────────
+
+Config.antennaMaxDist = 1000.00         -- how far the antennas can see
+Config.antennaRangeMin = 100            -- SEN setting: shortest range
+Config.antennaRangeMax = 500            -- SEN setting: longest range
+
+-- Antenna sensitivity, 0.2 to 1.0. Lower = the radar ignores more distant traffic.
+Config.sameSensitivity = 0.6            -- traffic going your way
+Config.oppSensitivity = 0.6             -- oncoming traffic
+
+-- Where the beam starts, in metres ahead of the car. Raise it if the radar keeps
+-- picking up cars crossing your own hood.
 Config.radarRayForwardOffsetM = 2.75
 
--- Max vertical separation (m) between patrol vehicle and target center for a hit (reduces bogus reads from height / odd angles). Set 0 or false to disable.
+-- Ignore targets more than this many metres above or below you (stops reads off
+-- overpasses and hills). Set 0 to disable.
 Config.maxTargetVerticalDelta = 10.0
 
--- If true: extra ray shape-test (first hit must be target vehicle; better through walls). If false: use HasEntityClearLosToEntity only (more reliable in FiveM).
--- Strict mode can fail if the ray hits your ped or interior geometry first; leave false unless you tune it.
+-- Stricter line-of-sight test. Can miss targets it shouldn't — leave this off.
 Config.strictShapeTestLos = false
 
--- Antenna sensitivity multiplier (0.2 to 1.0) for same/opp direction
-Config.sameSensitivity = 0.6
-Config.oppSensitivity = 0.6
-
---[[ Target window selection (Stalker manual: "strongest target in the radar beam")
-    echo     — Approximate received power: RCS proxy (size²) / range^radarRangeFalloff × Gaussian on lateral offset (main lobe).
-    hybrid   — Same as echo but tighter lateral weighting (see radarHybridLateralSigmaM); favors boresight more.
-    boresight— Closest target, then most on-center (gameplay / line-of-sight feel).
-    strongest— Largest vehicle size only (legacy; least like real radar).
-]]
+-- Which car takes the TARGET window when several are in the beam:
+--   'echo'      strongest return, like real radar (recommended)
+--   'hybrid'    same, but favours cars dead ahead
+--   'boresight' nearest and most centred
+--   'strongest' biggest vehicle
 Config.targetPriority = 'echo'
--- Two-way path range falloff exponent (4 ≈ radar equation 1/R^4).
-Config.radarRangeFalloff = 4
--- Lateral Gaussian sigma (meters): larger = more echo from off-boresight targets (wider main lobe).
-Config.radarBeamLateralSigmaM = 14.0
--- Hybrid mode only: narrower sigma = stricter centerline preference on top of echo.
-Config.radarHybridLateralSigmaM = 7.0
 
--- FAST window: must be faster than TARGET (Stalker: sports car while truck holds main window).
-Config.fastRequiresFasterThanTarget = true
--- If true, FAST only when TARGET has stronger echo (mergeScore) than the FAST candidate — classic truck vs sports car.
-Config.fastRequiresStrongerPrimary = false
--- FAST candidate must be within this many meters of TARGET *range* (hit.dist <= primary.dist + this). Stops far horizon / ghost lane traffic from stealing FAST when only one car matters up close. Set 0 to disable.
-Config.fastMaxDistanceBeyondPrimaryM = 70.0
+-- Fine-tuning for the modes above. Leave these alone unless the radar is picking
+-- the wrong car too often.
+Config.radarRangeFalloff = 4            -- how fast returns weaken with distance
+Config.radarBeamLateralSigmaM = 14.0    -- beam width; higher = picks up wider
+Config.radarHybridLateralSigmaM = 7.0   -- beam width in 'hybrid' mode
 
--- TARGET/LOCK arrows report target motion along the beam, not which antenna saw it:
--- down arrow = closing, up arrow = moving away. A target pacing the patrol car sits near
--- zero closing speed, so neither arrow lights until |closing speed| passes this many mph.
--- Raise it if the arrows twitch on cars holding your speed; lower it for quicker response.
+-- ── FAST window ───────────────────────────────────────────────────────────
+
+Config.fastRequiresFasterThanTarget = true  -- FAST must beat the TARGET speed
+Config.fastRequiresStrongerPrimary = false  -- only show FAST behind a bigger vehicle
+Config.fastMaxDistanceBeyondPrimaryM = 70.0 -- ignore FAST cars further than this
+                                            -- past the target. 0 = no limit.
+
+-- Closing speed (mph) needed before an arrow lights up. Raise it if the arrows
+-- flicker on cars holding your speed.
 Config.closingDeadbandMph = 1.5
 
--- Radar range (SEN): min/max in game units
-Config.antennaRangeMin = 100
-Config.antennaRangeMax = 500
+-- ── Patrol speed ──────────────────────────────────────────────────────────
 
--- Patrol speed low-end thresholds (PS 5/20 1): 1, 5, or 20 - min speed to show patrol
+-- Options for the PS button: the lowest speed that will show in the patrol window.
 Config.patrolSpeedThresholds = { 1, 5, 10, 20 }
 
--- Doppler pitch: linear ramp from min→max playback rate over 0..maxSpeed mph (each mph nudges pitch slightly; no stepped bands)
--- maxSpeed is the hard ceiling: at or above it the tone holds dopplerPitchMax and stops climbing.
--- It also sets how much pitch each mph below it is worth, so keep it near the fastest gap you
--- actually read — a high ceiling (it used to be 180) spends most of the range on traffic nobody
--- sees and leaves the everyday band sounding flat.
+-- ── Doppler audio ─────────────────────────────────────────────────────────
+
+-- Pitch and volume rise with target speed. The MaxSpeed values are the point where
+-- they stop climbing — keep them near the fastest speeds you actually clock, or
+-- everyday traffic all sounds the same.
 Config.dopplerPitchMin = 0.7
 Config.dopplerPitchMax = 2.5
 Config.dopplerPitchMaxSpeedMph = 100
--- Doppler volume: same idea — ramps smoothly with speed (optional separate cap)
 Config.dopplerVolMin = 0.2
 Config.dopplerVolMax = 1.0
 Config.dopplerVolMaxSpeedMph = 150
 
--- Doppler "On (Stationary Only)" mode: patrol speed at or below this (mph) counts as stopped.
--- Above it the tone cuts out. Small non-zero value so idle creep / rocking doesn't chop the audio.
+-- In "Stationary Only" mode, patrol speed up to this (mph) still counts as parked.
 Config.dopplerStationaryMaxMph = 2.0
 
--- Vehicle classes allowed (18 = emergency/police)
-Config.allowedVehicleClasses = { 18 }
+-- ── Self-test ─────────────────────────────────────────────────────────────
 
--- Radar PWR hitbox: lives on the radar face PNG and moves with /seeker_move.
--- Tune position/size in nui/style.css → .radar-power-hit (percent of .radar-inner).
--- With remote closed there is no NUI mouse focus — use on-screen PWR while remote is open, or /seeker_power.
+Config.autoSelfTest = false             -- re-run the self-test on a timer
+Config.autoSelfTestInterval = 600       -- seconds between them (real unit: 600)
 
--- Optional keybind for power when remote is closed (set to '' to disable)
-Config.keybindPower = ''
+-- ── Debug ─────────────────────────────────────────────────────────────────
 
--- Default display position/size (used when no KVP saved)
-Config.displayDefaults = {
-    x = 0.75,      -- 75% from left (bottom-middle-right)
-    y = 0.75,      -- 75% from top
+Config.remoteDebug = false          -- show the remote's button hitboxes
+Config.detectionZoneDebug = false   -- draw the radar beam in the world
+                                    -- (or toggle it in-game with /seeker_radar_debug)
+
+-- ── On-screen layout ──────────────────────────────────────────────────────
+-- Starting positions only. Players move things in-game and their layout is saved.
+-- x/y are fractions of the screen: 0.5 is the middle.
+
+Config.displayDefaults = {              -- the radar
+    x = 0.75,
+    y = 0.75,
     width = 400,
     height = 200,
     scale = 1.0,
 }
 
--- Default plate reader position/size (used when no KVP saved)
-Config.plateReaderDefaults = {
-    x = 0.43,      -- near centered for 16:9
-    y = 0.03,      -- near top of screen
+Config.plateReaderDefaults = {          -- the plate reader
+    x = 0.43,
+    y = 0.03,
     width = 278,
     height = 101,
     scale = 1.0,
 }
 
--- Default remote position/size (used when no KVP saved).
--- Double-click the remote body to start moving it, double-click again to stop.
--- x/y are optional: leave them nil and the remote stays screen-centered at any resolution
--- (the radar and plate reader use fixed fractions tuned for 16:9). Height follows the
--- image aspect ratio, so only width and scale are stored.
+-- The remote. Leave x/y commented out to keep it centered on any resolution.
+-- Double-click the remote to start moving it, double-click again to drop it.
 Config.remoteDefaults = {
     -- x = 0.43,
     -- y = 0.20,
@@ -124,78 +121,103 @@ Config.remoteDefaults = {
     scale = 1.0,
 }
 
--- Auto self-test: re-runs the full self-test on a timer while the radar is powered on.
--- The timer only counts while powered, and resets on power toggle and antenna switch.
-Config.autoSelfTest = false
--- Seconds between automatic self-tests (only used when Config.autoSelfTest is true).
--- The real STALKER runs one every 10 minutes.
-Config.autoSelfTestInterval = 600
+-- ── In-vehicle prop ───────────────────────────────────────────────────────
+-- The physical radar unit that sits in the car, with a working screen.
+-- Place it per vehicle in-game with /seekerplace — one admin sets it up and it
+-- applies to everyone driving that model.
 
--- Debug: show red transparent hitboxes on remote buttons for positioning
-Config.remoteDebug = false
-
--- Debug: draw world lines for radar ray geometry (parallel beams + end caps). Toggle in-game with /seeker_radar_debug
-Config.detectionZoneDebug = false
-
--- In-vehicle radar prop (stream/radar.ydr) with its screen rendered live by DUI.
--- Per-vehicle mounting offsets are set in-game with /seekerplace and stored server-side in
--- data/prop_offsets.json, keyed by vehicle spawncode — so one admin places it once and the
--- unit sits in the right spot for everyone on that vehicle model.
 Config.radarProp = {
     enabled = true,
 
-    -- Streamed archetype name from stream/radar.ytyp.
+    -- The model and its screen texture. Only change these if you swapped in your
+    -- own radar model.
     model = 'radar',
-
-    -- Embedded TXD + texture the DUI replaces. `seeker_front` is the screen face;
-    -- `seeker_main` (housing) and `seeker_spec` (specular) are left alone. For a texture
-    -- embedded in a .ydr the TXD name matches the model, which is why both read 'radar'.
     textureDict = 'radar',
     textureName = 'seeker_front',
 
-    -- DUI surface size in pixels. KEEP THE 715:230 RATIO — it is the native size of both
-    -- nui/images/seeker_dual_dsr_base.png and the seeker_front texture this replaces, so
-    -- anything else stretches the face across the model's UVs. Doubling both (1430x460)
-    -- gives a sharper screen at 4x the surface memory; the layout scales to fit either way.
+    -- Screen resolution. KEEP THE 715:230 RATIO or the screen will look stretched.
+    -- Doubling both (1430x460) gives a sharper screen for more memory.
     duiWidth = 715,
     duiHeight = 230,
 
-    -- Starting offset for /seekerplace when the vehicle model has no saved entry yet.
-    -- Local to the vehicle: +y forward, +x right, +z up. Rotation in degrees.
+    -- Where the unit starts before you place it. +y forward, +x right, +z up.
     defaultOffset = { x = -0.30, y = 0.35, z = 0.62, rx = 0.0, ry = 0.0, rz = 0.0 },
 
-    -- Ace permission required to run /seekerplace and write offsets. Grant with:
+    -- Permission needed for /seekerplace. Grant it with:
     --   add_ace group.admin seeker_dual.place allow
     placeAce = 'seeker_dual.place',
 
-    -- How far you can walk from the mounted vehicle before the unit is unloaded, in metres.
-    -- It stays bolted in when you step out — this only exists so a vehicle that unstreams
-    -- while you are across the map does not leave a prop floating where it used to be.
+    -- Metres you can get from the car before the unit unloads. It stays in the car
+    -- when you step out.
     unmountDistance = 150.0,
 
-    -- Nudge steps for the /seekerplace editor. Hold SHIFT for the fine step.
-    moveStep = 0.02,      -- metres per frame while a move key is held
+    -- How far the unit moves per keypress in /seekerplace. Hold SHIFT for the fine step.
+    moveStep = 0.02,        -- metres
     moveStepFine = 0.002,
-    rotateStep = 1.0,     -- degrees per frame while a rotate key is held
+    rotateStep = 1.0,       -- degrees
     rotateStepFine = 0.1,
 }
 
--- KVP keys for persistence (DO NOT EDIT UNLESS YOU KNOW WHAT YOUR DOING)
+-- ── ALPR ──────────────────────────────────────────────────────────────────
+-- Automatically reads the plates of cars around you and runs them through your
+-- CAD. Only flagged vehicles raise an alert.
+
+Config.alpr = {
+    -- Which CAD to run plates through:
+    --   'none'      off — plates are still read, just never run
+    --   'cde'       CDE CAD (setup below)
+    --   'imperial'  ImperialCAD (setup below)
+    provider = 'none',
+
+    radius       = 25.0,  -- how far around the car plates are read, in metres
+    rescanDelay  = 300,   -- seconds before the same plate is read again
+    scanInterval = 200,   -- ms between scans
+
+    -- How long a result is reused before asking the CAD again, in minutes. Both
+    -- CADs prefer this to constant lookups. The downside is staleness: a car
+    -- reported stolen five minutes ago still reads clean until this runs out.
+    -- Set to 0 to look up every single sighting.
+    cacheMinutes = 30,
+
+    -- Most lookups one player can run per minute, so a unit sat in traffic can't
+    -- flood your CAD. Anything over the cap is retried later, not lost.
+    -- Set to 0 for no limit.
+    maxQueriesPerMinute = 60,
+
+    -- Posts every flagged hit to Discord. Leave empty to disable.
+    discordWebhook     = '',
+    discordWebhookName = 'ALPR System',
+}
+
+-- CDE CAD setup. There is nothing to fill in here — your credentials go in
+-- server.cfg, and most communities already have these set from CDE's own resource:
+--
+--   set CDE_CAD_API_URL      "https://your-cdecad-instance.com/api"
+--   set CDE_CAD_API_KEY      "fvm_your_api_key"      -- Admin Panel > FiveM Settings
+--   set CDE_CAD_COMMUNITY_ID "your-discord-guild-id"
+--
+-- Alerts include warrants, BOLOs and dangerous/missing person flags on top of the
+-- usual stolen, impound, registration and insurance checks.
+
+-- ImperialCAD setup. Runs through the ImperialCAD resource, so make sure it's
+-- started and your credentials (Admin Panel > Settings > API) are at the top of
+-- server.cfg, above `ensure ImperialCAD`:
+--
+--   setr imperial_community_id "yourCommunityId"
+--   set imperialAPI "yourApiKey"
+--
+-- ImperialCAD doesn't return the make/model/colour of a vehicle, so those alerts
+-- show the plate and flags only. It has no impound field either — a registration
+-- status containing "impound" is what raises the impound flag.
+Config.imperialCad = {
+    -- Only change this if you renamed the ImperialCAD resource folder.
+    resourceName = 'ImperialCAD',
+}
+
+-- ── Don't edit below here ─────────────────────────────────────────────────
+
+-- Where each player's saved settings live.
 Config.kvpDisplay = 'seeker_dual_display'
 Config.kvpPlateDisplay = 'seeker_dual_plate_display'
 Config.kvpRemote = 'seeker_dual_remote'
 Config.kvpSettings = 'seeker_dual_settings'
-
--- CDE CAD ALPR integration
--- apiKey: generate from Admin Panel → System Integrations → FiveM API Key (fvm_ prefix)
-Config.cdeCad = {
-    enabled          = false,
-    apiKey           = '',
-    alprRadius       = 25.0,  -- meters — effective camera range per quadrant
-    alprRescanDelay  = 300,   -- seconds before the same plate is re-queried
-    alprScanInterval = 200,   -- ms between scan passes
-
-    -- Discord webhook for flagged ALPR hits (leave empty to disable)
-    discordWebhook     = '',
-    discordWebhookName = 'ALPR System',
-}

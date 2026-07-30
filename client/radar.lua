@@ -2047,7 +2047,9 @@ CreateThread(function()
 end)
 
 -- Continuous ALPR scan: runs independently of plate lock, mirrors real 4-camera ALPR hardware.
--- Each vehicle within radius is queried once, then ignored until alprRescanDelay expires.
+-- Each vehicle within radius is queried once, then ignored until Config.alpr.rescanDelay
+-- expires. Which CAD answers the query is entirely server/alpr.lua's business — this side only
+-- reads plates and renders whatever normalised record comes back.
 local alprScanned = {}   -- [plate] = gameTimer ms when last queried
 local alprHitLog  = {}   -- session hit log, newest first, max 20
 
@@ -2067,10 +2069,11 @@ end, false)
 
 CreateThread(function()
     while true do
-        local interval = (Config.cdeCad and Config.cdeCad.alprScanInterval) or 2000
+        local alprCfg  = Config.alpr
+        local interval = (alprCfg and alprCfg.scanInterval) or 2000
         Wait(interval)
 
-        if not Config.cdeCad or not Config.cdeCad.enabled then goto continue end
+        if not alprCfg or not alprCfg.provider or alprCfg.provider == 'none' then goto continue end
         if not Radar.power then goto continue end
         if not Radar.plateReaderEnabled then goto continue end
 
@@ -2078,8 +2081,8 @@ CreateThread(function()
         if not plyVeh or not isRadarPlyMountedInPatrolVehicle(plyVeh) then goto continue end
 
         local plyPos   = GetEntityCoords(plyVeh)
-        local radius   = Config.cdeCad.alprRadius or 50.0
-        local rescanMs = ((Config.cdeCad.alprRescanDelay or 120)) * 1000
+        local radius   = alprCfg.radius or 50.0
+        local rescanMs = (alprCfg.rescanDelay or 120) * 1000
         local now      = GetGameTimer()
 
         -- Expire old scanned entries to keep the table from growing forever
@@ -2115,14 +2118,38 @@ CreateThread(function()
 end)
 
 RegisterNetEvent('seeker_dual:alprResult', function(result)
-    if not result or result.noRecord then return end
+    if not result then return end
+
+    -- The plate was never actually looked up (CAD unreachable, rate limited, or the server's
+    -- per-player cap). Requeue it rather than holding a silence we never earned as an
+    -- all-clear for the whole rescan window — but not before the backoff the server asked
+    -- for, or the next pass 200 ms from now would just ask again.
+    --
+    -- The scan thread expires an entry once rescanDelay has passed since its timestamp, so
+    -- backing a timestamp into the future is how a plate is held for less than a full window.
+    if result.retry and result.plate then
+        local delayMs = (result.retryAfter or 0) * 1000
+        if delayMs > 0 then
+            local rescanMs = ((Config.alpr and Config.alpr.rescanDelay) or 120) * 1000
+            alprScanned[result.plate] = GetGameTimer() + delayMs - rescanMs
+        else
+            alprScanned[result.plate] = nil
+        end
+    end
+
+    if result.noRecord then return end
 
     local regStatus = result.registrationStatus or (result.registration and 'Valid' or 'Invalid')
     local insValid  = result.insurance and (result.insuranceStatus or ''):lower() ~= 'invalid'
     local regValid  = result.registration and (regStatus:lower() == 'valid' or regStatus:lower() == 'active')
 
+    -- Anything the CAD flagged that is not one of the four conditions above — warrants, BOLOs,
+    -- a dangerous or missing owner, community-defined flags. The server passes these through
+    -- verbatim, so a flag added CAD-side shows up here without a change to this file.
+    local extraFlags = type(result.flags) == 'table' and result.flags or {}
+
     -- Only alert on flagged vehicles
-    if not result.stolen and not result.impounded and insValid and regValid then return end
+    if not result.stolen and not result.impounded and insValid and regValid and #extraFlags == 0 then return end
 
     local parts = {}
     if result.year  then parts[#parts+1] = tostring(result.year)  end
@@ -2130,7 +2157,7 @@ RegisterNetEvent('seeker_dual:alprResult', function(result)
     if result.make  then parts[#parts+1] = result.make             end
     if result.model then parts[#parts+1] = result.model            end
 
-    local isSuspect = result.stolen or result.impounded
+    local isSuspect = result.stolen or result.impounded or result.alertLevel == 'alert'
     local header = (isSuspect and '~r~' or '~y~') .. 'ALPR - ' .. (result.plate or '?') .. ':~s~'
 
     local function statusColor(val, status)
@@ -2150,7 +2177,8 @@ RegisterNetEvent('seeker_dual:alprResult', function(result)
     -- Notif 2: owner + reg/ins + flags
     local notif2 = {}
     if result.owner and result.owner ~= '' then
-        notif2[#notif2+1] = '~y~Owner:~s~ ' .. result.owner
+        local owner = result.business and (result.owner .. ' ~c~(Business)~s~') or result.owner
+        notif2[#notif2+1] = '~y~Owner:~s~ ' .. owner
     end
     notif2[#notif2+1] = 'Reg: ' .. statusColor(result.registration, regStatus)
     notif2[#notif2+1] = 'Ins: ' .. statusColor(result.insurance, result.insuranceStatus or (insValid and 'Valid' or 'Invalid'))
@@ -2158,6 +2186,9 @@ RegisterNetEvent('seeker_dual:alprResult', function(result)
     if result.impounded then notif2[#notif2+1] = '~r~⚠ IMPOUNDED VEHICLE~s~'    end
     if not regValid     then notif2[#notif2+1] = '~r~⚠ EXPIRED REGISTRATION~s~' end
     if not insValid     then notif2[#notif2+1] = '~r~⚠ NO INSURANCE~s~'         end
+    for _, flag in ipairs(extraFlags) do
+        notif2[#notif2+1] = '~r~⚠ ' .. tostring(flag):upper() .. '~s~'
+    end
     BeginTextCommandThefeedPost('STRING')
     AddTextComponentSubstringPlayerName(table.concat(notif2, '\n'))
     EndTextCommandThefeedPostTicker(false, true)
@@ -2170,6 +2201,7 @@ RegisterNetEvent('seeker_dual:alprResult', function(result)
     if result.impounded then flags[#flags+1] = 'IMPOUNDED' end
     if not regValid     then flags[#flags+1] = 'EXPIRED REG' end
     if not insValid     then flags[#flags+1] = 'NO INS'    end
+    for _, flag in ipairs(extraFlags) do flags[#flags+1] = tostring(flag):upper() end
     local ms  = GetGameTimer()
     local s   = math.floor(ms / 1000)
     local ts  = ('%02d:%02d:%02d'):format(math.floor(s/3600), math.floor((s%3600)/60), s%60)
@@ -2178,7 +2210,7 @@ RegisterNetEvent('seeker_dual:alprResult', function(result)
         plate     = result.plate or '?',
         direction = result.direction or '?',
         vehicle   = table.concat(parts, ' '),
-        owner     = result.owner or '',
+        owner     = result.owner and (result.business and (result.owner .. ' (Business)') or result.owner) or '',
         flags     = table.concat(flags, ', '),
     })
     if #alprHitLog > 20 then alprHitLog[21] = nil end
