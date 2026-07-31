@@ -151,12 +151,6 @@ Config.radarProp = {
     -- when you step out.
     unmountDistance = 150.0,
 
-    -- The unit's screen is a lit material, so what you see is texture x world light.
-    -- At night that lands near zero and the screen goes black — turning up LIGHT can't
-    -- fix it, because the texture can't get brighter than the light hitting it. So we
-    -- put a small light in front of the screen after dark. Only glows when powered.
-    --
-    -- Set enabled = false if you make the screen material emissive in the model.
     screenGlow = {
         enabled = true,
 

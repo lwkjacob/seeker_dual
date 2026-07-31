@@ -506,9 +506,10 @@ body.dui-mode .radar-container {
     color: transparent;
 }
 
-.remote-btn:hover {
-    background: rgba(255, 255, 255, 0.12);
-}
+/* No hover state on purpose. The remote art is a photograph of a real keypad, and a wash over
+   one key reads as a rendering fault rather than a highlight — the cursor is already telling
+   you what you are over. Press feedback below is kept, since that is a thing the real keypad
+   does. Hitboxes are still visible for tuning via Config.remoteDebug. */
 
 .remote-btn:active {
     background: rgba(255, 255, 255, 0.25);
