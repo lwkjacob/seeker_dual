@@ -406,6 +406,8 @@ Discord: **https://discord.gg/XHrPvWVHRW** — open a ticket.
 
 I recommend and personally use [RocketNode](https://rocketnode.us/lwkdev) for hosting your FiveM server running this resource. Use code **LWKDEV** for 25% off.
 
+![LWK Dev](nui/images/LWK_DEV_BANNER_1.png)
+
 ---
 
 ## License
