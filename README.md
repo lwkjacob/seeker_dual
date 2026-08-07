@@ -402,6 +402,12 @@ Discord: **https://discord.gg/XHrPvWVHRW** — open a ticket.
 
 ---
 
+## Recommended Hosting
+
+I recommend and personally use [RocketNode](https://rocketnode.us/lwkdev) for hosting your FiveM server running this resource. Use code **LWKDEV** for 25% off.
+
+---
+
 ## License
 
 MIT License — see `LICENSE` for full text.
