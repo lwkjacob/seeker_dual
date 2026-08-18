@@ -288,7 +288,7 @@ raises the impound flag. Business-owned plates are marked `(Business)`.
 
 ### Setup — PlateNet CAD/MDT
 
-1. Install and start the `platenet` resource before `seeker_dual`.
+1. Install and start the [`platenet`](https://github.com/scentral/platenet) resource before `seeker_dual`.
 2. Open PlateNet's `server/security.lua` and add:
 
    ```
