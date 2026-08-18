@@ -476,13 +476,90 @@ end
 RegisterNetEvent('seeker_dual:runAlpr', function(plate, direction, force)
     local src = source
 
-    local provider = providers[ALPR.provider]
-    if not provider then return end
-
     plate = type(plate) == 'string' and plate:gsub('%s+', ''):upper() or ''
     if plate == '' or plate == '--------' or #plate > 16 then return end
     if type(direction) ~= 'string' or #direction > 32 then direction = '' end
     force = force == true
+
+    if ALPR.provider == 'platenet' then
+        if GetResourceState('platenet') ~= 'started' then
+            sendResult(src, {
+                plate = plate, direction = direction,
+                noRecord = true, retry = true, retryAfter = RETRY_BACKOFF_SECONDS,
+            })
+            return
+        end
+
+        local allowed, retryAfter = withinRateLimit(src)
+        if not allowed then
+            sendResult(src, {
+                plate = plate, direction = direction,
+                noRecord = true, retry = true, retryAfter = retryAfter,
+            })
+            return
+        end
+
+        local key = src .. '|' .. plate
+        if inFlight[key] then
+            return
+        end
+        inFlight[key] = true
+
+        local finished = false
+        local function finish()
+            if finished then return false end
+            finished = true
+            inFlight[key] = nil
+            return true
+        end
+
+        SetTimeout(30000, function()
+            if not finish() then return end
+            sendResult(src, {
+                plate = plate, direction = direction,
+                noRecord = true, retry = true, retryAfter = RETRY_BACKOFF_SECONDS,
+            })
+        end)
+
+        exports.platenet:IsPlateAlerted(src, plate, function(alert)
+            if finished then return end
+
+            local alertTable = type(alert) == 'table'
+
+            if not alertTable or alert.success ~= true then
+                if not finish() then return end
+                sendResult(src, {
+                    plate = plate, direction = direction,
+                    noRecord = true,
+                    retry = not (alertTable and alert.unpaired == true) or nil,
+                    retryAfter = not (alertTable and alert.unpaired == true) and RETRY_BACKOFF_SECONDS or nil,
+                })
+                return
+            end
+
+            if alert.alert ~= true then
+                finish()
+                return
+            end
+
+            exports.platenet:ScanPlate(src, plate, function(scan)
+
+                if not finish() then return end
+
+                sendResult(src, {
+                    platenet = true,
+                    plate = plate,
+                    direction = direction,
+                    category = alert.category,
+                })
+            end)
+        end)
+
+        return
+    end
+
+    local provider = providers[ALPR.provider]
+    if not provider then return end
 
     -- Enforced here rather than trusting the client's own cooldown: `force` arrives over a net
     -- event, so without this a spoofed one could bypass the cache on every scan pass. Demoting

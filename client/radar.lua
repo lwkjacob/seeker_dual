@@ -2153,7 +2153,8 @@ CreateThread(function()
             local offset = GetOffsetFromEntityGivenWorldCoords(plyVeh, vehPos.x, vehPos.y, vehPos.z)
             local dirV   = offset.y >= 0 and 'Front' or 'Rear'
             local dirH   = offset.x >= 0 and 'Right' or 'Left'
-            TriggerServerEvent('seeker_dual:runAlpr', plate, dirV .. ' ' .. dirH)
+            local direction = dirV .. ' ' .. dirH
+            TriggerServerEvent('seeker_dual:runAlpr', plate, direction)
 
             ::next::
         end
@@ -2183,6 +2184,42 @@ RegisterNetEvent('seeker_dual:alprResult', function(result)
     end
 
     if result.noRecord then return end
+
+    if result.platenet then
+        local labels = {
+            stolen_vehicle = 'STOLEN VEHICLE',
+            bolo = 'ACTIVE BOLO',
+            registration_suspended = 'SUSPENDED REGISTRATION',
+            registration_expired = 'EXPIRED REGISTRATION',
+        }
+        local label = labels[result.category] or 'PLATE ALERT'
+        local header = '~r~ALPR - ' .. (result.plate or '?') .. ':~s~'
+        local dir = result.direction and ('  ~c~' .. result.direction .. '~s~') or ''
+
+        BeginTextCommandThefeedPost('STRING')
+        AddTextComponentSubstringPlayerName(header .. dir .. '\n~r~⚠ ' .. label .. '~s~')
+        EndTextCommandThefeedPostTicker(false, true)
+
+        SendNUIMessage({ _type = 'audio', name = 'alpr_hit', vol = Radar.beepVolume or 1.0 })
+
+        local ms = GetGameTimer()
+        local seconds = math.floor(ms / 1000)
+        local ts = ('%02d:%02d:%02d'):format(
+            math.floor(seconds / 3600),
+            math.floor((seconds % 3600) / 60),
+            seconds % 60
+        )
+        table.insert(alprHitLog, 1, {
+            time = ts,
+            plate = result.plate or '?',
+            direction = result.direction or '?',
+            vehicle = '',
+            owner = '',
+            flags = label,
+        })
+        if #alprHitLog > 20 then alprHitLog[21] = nil end
+        return
+    end
 
     local regStatus = result.registrationStatus or (result.registration and 'Valid' or 'Invalid')
     local insValid  = result.insurance and (result.insuranceStatus or ''):lower() ~= 'invalid'

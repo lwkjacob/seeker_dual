@@ -187,6 +187,7 @@ Config.alpr = {
     --   'none'      off — plates are still read, just never run
     --   'cde'       CDE CAD (setup below)
     --   'imperial'  ImperialCAD (setup below)
+    --   'platenet'  PlateNet CAD/MDT
     provider = 'none',
 
     radius       = 25.0,  -- how far around the car plates are read, in metres

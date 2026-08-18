@@ -286,6 +286,31 @@ ImperialCAD doesn't return a vehicle's make, model or colour, so those alerts sh
 flags only. It has no impound field either — a registration status containing "impound" is what
 raises the impound flag. Business-owned plates are marked `(Business)`.
 
+### Setup — PlateNet CAD/MDT
+
+1. Install and start the [`platenet`](https://github.com/scentral/platenet) resource before `seeker_dual`.
+2. Open PlateNet's `server/security.lua` and add:
+
+   ```
+   PlateNetSecurity = {
+       PlateScanners = {
+           ['seeker_dual'] = true,
+       },
+
+       AlertChecks = {
+           ['seeker_dual'] = true,
+       },
+   }
+   ```
+
+3. In the `seeker_dual` resource, open `shared/config.lua` and set:
+
+   ```
+   Config.alpr.provider = 'platenet'
+   ```
+
+4. Restart `platenet` and `seeker_dual`.
+
 ### Scan settings
 
 ```lua
