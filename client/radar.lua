@@ -929,6 +929,42 @@ local function lockEnunciatorDirection(lockedDir)
     return lockedDir
 end
 
+--- Tells other resources a lock was taken, with what the operator is reading off the unit.
+--- A CAD, a ticket script or a logger listens for `seeker_dual:locked` instead of polling the
+--- export. Speeds are in the unit the radar is showing, rounded the way the display rounds;
+--- speedMs is the raw value for anyone who wants their own conversion.
+local MOV_STA_NAMES = { [0] = 'moving', [1] = 'stationary_closing', [2] = 'stationary_away', [3] = 'stationary_both' }
+local function shownSpeed(ms)
+    if ms == nil then return nil end
+    return math.floor(Utils.ConvertSpeed(ms, Radar.speedUnit) + 0.5)
+end
+local function announceLock(kind, which, veh, speedMs, dir)
+    local plate = which == 'front' and Radar.frontLockedPlate or Radar.rearLockedPlate
+    if (not plate or plate == '') and veh and DoesEntityExist(veh) then
+        plate = (getPlateDisplayData(veh))
+    end
+    local plyVeh = Player:GetVehicle()
+    local netId = nil
+    if veh and DoesEntityExist(veh) and NetworkGetEntityIsNetworked(veh) then
+        netId = NetworkGetNetworkIdFromEntity(veh)
+    end
+    TriggerEvent('seeker_dual:locked', {
+        kind = kind,
+        antenna = which,
+        speed = shownSpeed(speedMs),
+        speedMs = speedMs,
+        fastSpeed = Radar.fastLockOn and shownSpeed(Radar.fastLockedSpeed) or nil,
+        unit = Radar.speedUnit,
+        direction = dir,
+        patrolSpeed = plyVeh and shownSpeed(GetEntitySpeed(plyVeh)) or nil,
+        mode = MOV_STA_NAMES[Radar.movStaMode or 0] or 'moving',
+        plate = plate,
+        targetNetId = netId,
+        targetHeading = (veh and DoesEntityExist(veh)) and GetEntityHeading(veh) or nil,
+        at = GetCloudTimeAsInt(),
+    })
+end
+
 --- Try to lock `which` ('front' | 'rear'); plays beep + voice on success.
 ---@return boolean
 local function acquireAntennaLock(which)
@@ -946,6 +982,7 @@ local function acquireAntennaLock(which)
         refreshFastLockedFrozenAtLock()
         SendNUIMessage({ _type = 'audio', name = 'beep', vol = Radar.beepVolume or 1.0 })
         playVoiceEnunciator('front', lockEnunciatorDirection(dir))
+        announceLock('speed', 'front', best.veh, best.speed, dir)
         return true
     end
     if which == 'rear' then
@@ -959,6 +996,7 @@ local function acquireAntennaLock(which)
         refreshFastLockedFrozenAtLock()
         SendNUIMessage({ _type = 'audio', name = 'beep', vol = Radar.beepVolume or 1.0 })
         playVoiceEnunciator('rear', lockEnunciatorDirection(dir))
+        announceLock('speed', 'rear', best.veh, best.speed, dir)
         return true
     end
     return false
@@ -999,6 +1037,7 @@ local function acquirePlateLockFromAntenna(which)
         Radar.frontPlateLocked = true
         SendNUIMessage({ _type = 'audio', name = 'beep', vol = Radar.beepVolume or 1.0 })
         runForcedAlpr(Radar.frontLockedPlate, 'Front Lock')
+        announceLock('plate', 'front', best and best.veh or nil, Radar.frontLockedSpeed, Radar.frontLockedDir)
         return true
     end
     if which == 'rear' then
@@ -1014,6 +1053,7 @@ local function acquirePlateLockFromAntenna(which)
         Radar.rearPlateLocked = true
         SendNUIMessage({ _type = 'audio', name = 'beep', vol = Radar.beepVolume or 1.0 })
         runForcedAlpr(Radar.rearLockedPlate, 'Rear Lock')
+        announceLock('plate', 'rear', best and best.veh or nil, Radar.rearLockedSpeed, Radar.rearLockedDir)
         return true
     end
     return false

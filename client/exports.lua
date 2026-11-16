@@ -1,4 +1,9 @@
 --- Client exports for external resources
+local function lockedShown(ms)
+    if ms == nil then return nil end
+    return math.floor(Utils.ConvertSpeed(ms, Radar.speedUnit) + 0.5)
+end
+
 local function buildRadarState()
     return {
         power = Radar.power,
@@ -23,6 +28,16 @@ local function buildRadarState()
         dopplerMode = Radar.dopplerMode,
         dopplerEnabled = Radar.dopplerEnabled,
         speedUnit = Radar.speedUnit,
+        -- What the operator has locked, in the unit on the display (see seeker_dual:locked).
+        frontLockedSpeed = lockedShown(Radar.frontLockedSpeed),
+        rearLockedSpeed = lockedShown(Radar.rearLockedSpeed),
+        fastLockedSpeed = lockedShown(Radar.fastLockedSpeed),
+        frontLockedDir = Radar.frontLockedDir,
+        rearLockedDir = Radar.rearLockedDir,
+        frontPlateLocked = Radar.frontPlateLocked,
+        rearPlateLocked = Radar.rearPlateLocked,
+        frontLockedPlate = Radar.frontLockedPlate,
+        rearLockedPlate = Radar.rearLockedPlate,
     }
 end
 

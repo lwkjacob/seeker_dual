@@ -361,6 +361,33 @@ exports.seeker_dual:IsPlayerRadarActive(source)
 exports.seeker_dual:ClearAlprCache()              -- drop every cached plate lookup
 ```
 
+`GetRadarState()` also carries what is locked, in the unit on the display: `frontLockedSpeed`,
+`rearLockedSpeed`, `fastLockedSpeed`, `frontLockedDir` / `rearLockedDir` (`'closing'`, `'away'`
+or nil), `frontPlateLocked` / `rearPlateLocked` and `frontLockedPlate` / `rearLockedPlate`.
+
+## Events
+
+When the operator locks a speed or a plate, the client fires `seeker_dual:locked` for other
+resources on the same client - a CAD that fills in a citation, a ticket script, a logger:
+
+```lua
+AddEventHandler('seeker_dual:locked', function(lock)
+    -- lock.kind          'speed' | 'plate'
+    -- lock.antenna       'front' | 'rear'
+    -- lock.speed         locked speed in lock.unit, as the display shows it (nil for a plate lock with no speed held)
+    -- lock.speedMs       the same speed in m/s
+    -- lock.fastSpeed     the frozen FAST window, when FAST LOCK is on
+    -- lock.unit          'mph' | 'kmh'
+    -- lock.direction     'closing' | 'away' | nil (pacing)
+    -- lock.patrolSpeed   your own speed, in lock.unit
+    -- lock.mode          'moving' | 'stationary_closing' | 'stationary_away' | 'stationary_both'
+    -- lock.plate         the plate on that antenna: the locked plate, else the target's
+    -- lock.targetNetId   the target vehicle's network id, when it has one
+    -- lock.targetHeading the target's heading in degrees
+    -- lock.at            GetCloudTimeAsInt() when it locked
+end)
+```
+
 ---
 
 ## Troubleshooting
