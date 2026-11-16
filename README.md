@@ -355,6 +355,8 @@ exports.seeker_dual:IsRadarActive()               -- powered and transmitting
 exports.seeker_dual:IsRadarDisplayed()            -- radar is on screen
 exports.seeker_dual:CanControlRadar()             -- in a valid vehicle
 exports.seeker_dual:SetPlateDesigns(designs)     -- custom plate artwork for the plate reader (below)
+exports.seeker_dual:SetAccess(allowed, reason)   -- let another resource decide who may use the radar (below)
+exports.seeker_dual:PowerOn()                    -- power on with the self-test, as PWR does
 
 -- Server
 exports.seeker_dual:GetPlayerRadarState(source)   -- {power, frontXmit, rearXmit}
@@ -365,6 +367,34 @@ exports.seeker_dual:ClearAlprCache()              -- drop every cached plate loo
 `GetRadarState()` also carries what is locked, in the unit on the display: `frontLockedSpeed`,
 `rearLockedSpeed`, `fastLockedSpeed`, `frontLockedDir` / `rearLockedDir` (`'closing'`, `'away'`
 or nil), `frontPlateLocked` / `rearPlateLocked` and `frontLockedPlate` / `rearLockedPlate`.
+
+## Auto lock
+
+When the target on the transmitting antenna, front or rear, reaches the lock speed, the radar
+locks it and its plate by itself. It is on by default at 80 (in the radar's speed unit).
+Officers can turn it off or change the speed in `/seeker_settings`, and their choice is saved.
+A target that was just released is not locked again for a few seconds, and the same car is not
+relocked on that antenna until another one has been. Defaults are in `Config.autoLock`.
+
+## Who may use it
+
+By default, anyone in an allowed vehicle class can use the radar. A resource that knows better,
+such as a CAD's duty roster, can take that over:
+
+```lua
+exports.seeker_dual:SetAccess(false, 'The radar is for on-duty officers.')
+exports.seeker_dual:SetAccess(true)
+```
+
+While access is closed, F5, power and the lock keys refuse with that reason, and closing it
+while the radar is on powers it down. `PowerOn()` turns the radar on for the operator, for a
+resource that does that when they enter a patrol car.
+
+## Plate lookups without setup
+
+`Config.alpr.provider = 'auto'` (the default) runs plates through CDE CAD when its
+`CDE_CAD_API_KEY` convar is set, through ImperialCAD when that resource is running, and
+nowhere otherwise. When neither is there, the plate reader does not scan for lookups at all.
 
 ## Custom plate designs
 

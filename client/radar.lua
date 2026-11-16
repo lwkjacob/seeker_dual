@@ -37,6 +37,8 @@ Radar = {
     stationaryMode = false,      -- derived: movStaMode > 0 (kept for exports / saved settings)
     antennaRange = 200,          -- SEN: sits on a step of the 100-500 cycle the button walks
     patrolSpeedThreshold = 5,    -- PS: one of Config.patrolSpeedThresholds (mph)
+    autoLockOn = not (Config.autoLock and Config.autoLock.enabled == false),
+    autoLockSpeed = (Config.autoLock and Config.autoLock.speed) or 80,
     beepVolume = 1.0,           -- Speaker: volume 0-1
     psBlank = false,            -- PS BLANK: blank patrol when locked
     displayBrightness = 1.5,   -- LIGHT: 0.5 dim, 1.0 normal, 1.5 bright
@@ -728,6 +730,8 @@ local function loadSettings()
             -- Older saves only had the boolean; a saved `true` becomes plain 'on'.
             setDopplerMode(data.dopplerMode or (data.dopplerEnabled == true and 'on') or 'off')
             Radar.plateReaderEnabled = data.plateReaderEnabled ~= false
+            if data.autoLockOn ~= nil then Radar.autoLockOn = data.autoLockOn end
+            Radar.autoLockSpeed = tonumber(data.autoLockSpeed) or Radar.autoLockSpeed
         end
     end
 end
@@ -752,6 +756,8 @@ local function saveSettings()
         dopplerMode = Radar.dopplerMode,
         dopplerEnabled = Radar.dopplerEnabled,
         plateReaderEnabled = Radar.plateReaderEnabled,
+        autoLockOn = Radar.autoLockOn,
+        autoLockSpeed = Radar.autoLockSpeed,
     }
     SetResourceKvp(KVP_SETTINGS, json.encode(data))
 end
@@ -857,8 +863,15 @@ end
 local NOTIFY_POLICE_VEHICLE = 'You must be in a police vehicle to use the radar.'
 
 local function notifyPoliceVehicleError(description)
-    lib.notify({ type = 'error', description = description or NOTIFY_POLICE_VEHICLE })
+    lib.notify({ type = 'error', description = description or (Player.accessDenied and Player.accessReason) or NOTIFY_POLICE_VEHICLE })
 end
+
+-- Auto lock state, used by the clear functions below and by maybeAutoLock further down.
+local AUTO_LOCK_REARM_MS = 8000
+local lastLockReleaseAt = 0
+local autoLockedVeh = {}
+local autoLockPending = false
+local maybeAutoLock -- defined once the lock functions exist below
 
 --- Clear speed/plate lock state (power off, PWR toggle, menu power off, etc.)
 local function clearAllRadarLocks()
@@ -893,6 +906,7 @@ local function restoreOperatorSetupOnPowerOn()
 end
 
 local function clearFrontAntennaLock()
+    lastLockReleaseAt = GetGameTimer()
     Radar.frontLocked = false
     Radar.frontLockedSpeed = nil
     Radar.frontLockedDir = nil
@@ -905,6 +919,7 @@ local function clearFrontAntennaLock()
 end
 
 local function clearRearAntennaLock()
+    lastLockReleaseAt = GetGameTimer()
     Radar.rearLocked = false
     Radar.rearLockedSpeed = nil
     Radar.rearLockedDir = nil
@@ -928,6 +943,11 @@ local function lockEnunciatorDirection(lockedDir)
     end
     return lockedDir
 end
+
+--- Auto lock (Config.autoLock): the transmitting antenna's target at or over the lock speed
+--- is locked, with its plate, without the operator pressing LOCK. A target that was just
+--- released is not locked again straight away, and the same car is not relocked on that
+--- antenna until another one has been, so a release is not undone a tick later.
 
 --- Plate artwork a server's CAD has for its own plates (exports.seeker_dual:SetPlateDesigns).
 --- The artwork is large, so it goes to the page once, the next time the display updates,
@@ -1093,6 +1113,21 @@ local function acquirePlateLockFromAntenna(which)
     return false
 end
 
+maybeAutoLock = function(which, best)
+    if not Radar.autoLockOn or autoLockPending or not best or not best.speed or not best.veh then return end
+    if Radar.activeAntenna ~= which or Radar[which .. 'Locked'] then return end
+    if Utils.ConvertSpeed(best.speed, Radar.speedUnit) < (tonumber(Radar.autoLockSpeed) or 80) then return end
+    if GetGameTimer() - lastLockReleaseAt < AUTO_LOCK_REARM_MS then return end
+    if autoLockedVeh[which] == best.veh then return end
+    autoLockedVeh[which] = best.veh
+    autoLockPending = true
+    -- Out of the display tick: the lock functions take their own capture of the beam.
+    CreateThread(function()
+        if acquireAntennaLock(which) then acquirePlateLockFromAntenna(which) end
+        autoLockPending = false
+    end)
+end
+
 --- ANT / menu: front → rear → front. The real unit has no "both" position.
 --- Selecting an antenna also brings XMIT up, so ANT never leaves the radar silent.
 local function cycleAntennaTransmit()
@@ -1191,6 +1226,7 @@ local function sendToNUI()
             else
                 local best, dir = getBestForAntenna(captured, 'front', Radar.frontMode, liveMode)
                 if best then
+                    maybeAutoLock('front', best)
                     if best.speed >= 0.1 then
                         frontBestSpeed = best.speed
                         frontBestMergeScore = mergeScore(best)
@@ -1225,6 +1261,7 @@ local function sendToNUI()
             else
                 local best, dir = getBestForAntenna(captured, 'rear', Radar.rearMode, liveMode)
                 if best then
+                    maybeAutoLock('rear', best)
                     if best.speed >= 0.1 then
                         rearBestSpeed = best.speed
                         rearBestMergeScore = mergeScore(best)
@@ -1536,6 +1573,29 @@ local function openMenu()
                 end,
             },
             {
+                title = 'Auto Lock',
+                description = Radar.autoLockOn and ('On - locks the target and plate at ' .. tostring(Radar.autoLockSpeed) .. ' ' .. Radar.speedUnit) or 'Off',
+                icon = 'lock',
+                onSelect = function()
+                    Radar.autoLockOn = not Radar.autoLockOn
+                    saveSettings()
+                    openMenu()
+                end,
+            },
+            {
+                title = 'Auto Lock Speed',
+                description = tostring(Radar.autoLockSpeed) .. ' ' .. Radar.speedUnit,
+                icon = 'gauge-high',
+                onSelect = function()
+                    local list = (Config.autoLock and Config.autoLock.speeds) or { 50, 60, 70, 80, 90, 100, 110, 120 }
+                    local idx = 0
+                    for i, v in ipairs(list) do if v == Radar.autoLockSpeed then idx = i end end
+                    Radar.autoLockSpeed = list[(idx % #list) + 1]
+                    saveSettings()
+                    openMenu()
+                end,
+            },
+            {
                 title = 'Self Test',
                 description = 'Test display and beep',
                 icon = 'vial',
@@ -1689,6 +1749,29 @@ local function applySeekerPowerToggle()
         closeRemote()
     end
 end
+
+--- Who may use the radar, decided by another resource (a CAD's duty roster). Until something
+--- calls this, the vehicle rules alone apply. Closing it powers the radar down and shuts the
+--- remote; the reason is what the operator is told when they try F5 or power.
+exports('SetAccess', function(allowed, reason)
+    Player.accessDenied = allowed == false
+    Player.accessReason = (type(reason) == 'string' and reason ~= '') and reason or nil
+    if Player.accessDenied and Radar.power then
+        applyRadarPowerOffFromMenu()
+        closeRemote()
+    end
+    return true
+end)
+
+--- Power the radar on (with its self-test), as the PWR button does. For a resource that turns
+--- it on for the operator, such as on entering a patrol car. Does nothing when it is already on
+--- or the operator may not use it here; answers whether it is on afterwards.
+exports('PowerOn', function()
+    if Radar.power then return true end
+    if not Player:CanControlRadar() then return false end
+    applySeekerPowerToggle()
+    return Radar.power == true
+end)
 
 --- Register keybinds
 RegisterCommand('seeker_dual_menu', function()
@@ -2169,7 +2252,7 @@ end, false)
 --- server enforces the same window — this side only saves the round trip.
 runForcedAlpr = function(plate, direction)
     local alprCfg = Config.alpr
-    if not alprCfg or not alprCfg.provider or alprCfg.provider == 'none' then return end
+    if not alprCfg or not alprCfg.provider or alprCfg.provider == 'none' or (alprCfg.provider == 'auto' and not GlobalState.seekerAlprActive) then return end
     if not Radar.power or not Radar.plateReaderEnabled then return end
 
     plate = type(plate) == 'string' and plate:gsub('%s+', '') or ''
@@ -2200,7 +2283,7 @@ CreateThread(function()
         local interval = (alprCfg and alprCfg.scanInterval) or 2000
         Wait(interval)
 
-        if not alprCfg or not alprCfg.provider or alprCfg.provider == 'none' then goto continue end
+        if not alprCfg or not alprCfg.provider or alprCfg.provider == 'none' or (alprCfg.provider == 'auto' and not GlobalState.seekerAlprActive) then goto continue end
         if not Radar.power then goto continue end
         if not Radar.plateReaderEnabled then goto continue end
 
