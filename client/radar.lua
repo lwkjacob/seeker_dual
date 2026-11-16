@@ -929,6 +929,40 @@ local function lockEnunciatorDirection(lockedDir)
     return lockedDir
 end
 
+--- Plate artwork a server's CAD has for its own plates (exports.seeker_dual:SetPlateDesigns).
+--- The artwork is large, so it goes to the page once, the next time the display updates,
+--- and each update after that only carries the id of the design for the plate on screen.
+--- The id is looked up once per plate change, not every tick.
+local plateDesignIds = {}          -- [plate with no spaces] = design id
+local plateDesignsForNui = nil     -- waiting to be sent to the page
+local lastDesignPlate = {}
+local lastDesignId = {}
+
+local function plateDesignFor(which, plate)
+    if plate == lastDesignPlate[which] then return lastDesignId[which] end
+    lastDesignPlate[which] = plate
+    local key = tostring(plate or ''):gsub('%s', ''):upper()
+    local id = plateDesignIds[key] or false
+    lastDesignId[which] = id
+    return id
+end
+
+exports('SetPlateDesigns', function(payload)
+    if type(payload) ~= 'table' then return false end
+    local designs = payload.designs or payload.plateDesigns or {}
+    local byPlate = payload.byPlate or payload.designIdByPlate or {}
+    if type(designs) ~= 'table' or type(byPlate) ~= 'table' then return false end
+    local ids = {}
+    for plate, id in pairs(byPlate) do
+        local key = tostring(plate):gsub('%s', ''):upper()
+        if key ~= '' and designs[id] then ids[key] = tostring(id) end
+    end
+    plateDesignIds = ids
+    plateDesignsForNui = designs
+    lastDesignPlate, lastDesignId = {}, {}
+    return true
+end)
+
 --- Tells other resources a lock was taken, with what the operator is reading off the unit.
 --- A CAD, a ticket script or a logger listens for `seeker_dual:locked` instead of polling the
 --- export. Speeds are in the unit the radar is showing, rounded the way the display rounds;
@@ -1277,6 +1311,12 @@ local function sendToNUI()
         dopplerSpeedMph = dopplerMphFromSpeeds(targetSpeedMs, patrolSpeed)
     end
 
+    if plateDesignsForNui then
+        SendNUIMessage({ _type = 'plateDesigns', designs = plateDesignsForNui })
+        plateDesignsForNui = nil
+    end
+    local frontPlateShown = Radar.frontPlateLocked and (Radar.frontLockedPlate or frontLivePlateText) or frontLivePlateText
+    local rearPlateShown = Radar.rearPlateLocked and (Radar.rearLockedPlate or rearLivePlateText) or rearLivePlateText
     SendNUIMessage({
         _type = 'update',
         power = Radar.power,
@@ -1308,8 +1348,10 @@ local function sendToNUI()
         dopplerVolume = Radar.beepVolume or 1.0,
         plateReaderVisible = Radar.plateReaderEnabled and Radar.displayed and not Radar.hidden
             and not Radar.overlayHidden and Radar.power,
-        frontPlateText = Radar.frontPlateLocked and (Radar.frontLockedPlate or frontLivePlateText) or frontLivePlateText,
-        rearPlateText = Radar.rearPlateLocked and (Radar.rearLockedPlate or rearLivePlateText) or rearLivePlateText,
+        frontPlateText = frontPlateShown,
+        rearPlateText = rearPlateShown,
+        frontPlateDesign = plateDesignFor('front', frontPlateShown),
+        rearPlateDesign = plateDesignFor('rear', rearPlateShown),
         frontPlateStyle = Radar.frontPlateLocked and (Radar.frontLockedPlateStyle or frontLivePlateStyle) or frontLivePlateStyle,
         rearPlateStyle = Radar.rearPlateLocked and (Radar.rearLockedPlateStyle or rearLivePlateStyle) or rearLivePlateStyle,
         frontPlateLocked = Radar.frontPlateLocked or false,

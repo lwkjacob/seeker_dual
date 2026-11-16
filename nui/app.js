@@ -444,6 +444,57 @@ function setPlateTextFit(el, textValue) {
     requestAnimationFrame(fit);
 }
 
+/* Plate artwork from the server's CAD (SetPlateDesigns). Kept here once; each update only
+   names the design for the plate on screen, and a slot is only restyled when that changes. */
+let plateDesigns = {};
+const shownDesign = { front: null, rear: null };
+
+function setPlateTextDesign(el, textValue, design, bg) {
+    let inner = el.querySelector('.plate-text-inner');
+    if (!inner) {
+        inner = document.createElement('span');
+        inner.className = 'plate-text-inner';
+        el.textContent = '';
+        el.appendChild(inner);
+    }
+    inner.textContent = (textValue || '--------').toString().slice(0, 8).toUpperCase();
+    const h = (bg && bg.clientHeight) || el.parentElement?.clientHeight || 40;
+    const pct = design.textSizePercent != null ? Number(design.textSizePercent) : 28;
+    inner.style.fontSize = `${Math.max(8, Math.round(h * pct / 100))}px`;
+    inner.style.letterSpacing = '0.06em';
+}
+
+function applyPlateDesign(slot, designId, bg, textEl) {
+    const design = designId ? plateDesigns[designId] : null;
+    const id = design ? designId : null;
+    if (shownDesign[slot] === id) return !!design;
+    shownDesign[slot] = id;
+    if (!design) {
+        textEl.classList.remove('plate-text-design');
+        textEl.style.left = textEl.style.top = textEl.style.right = textEl.style.bottom = textEl.style.transform = textEl.style.color = '';
+        return false;
+    }
+    bg.src = design.imageDataUri;
+    textEl.classList.add('plate-text-design');
+    textEl.style.left = `${design.textXPercent != null ? design.textXPercent : 50}%`;
+    textEl.style.top = `${design.textYPercent != null ? design.textYPercent : 60}%`;
+    textEl.style.right = 'auto';
+    textEl.style.bottom = 'auto';
+    textEl.style.transform = 'translate(-50%, -50%)';
+    textEl.style.color = design.textColor || '#111111';
+    return true;
+}
+
+/* The update arrives every radar tick. Fitting the plate number measures it up to ~20 times,
+   so it is only redone when the text, the design or the plate's size changed. */
+const lastPlateText = { front: null, rear: null };
+function plateTextChanged(slot, text, el) {
+    const key = `${text}|${shownDesign[slot] || ''}|${el.clientWidth}x${el.clientHeight}`;
+    if (lastPlateText[slot] === key) return false;
+    lastPlateText[slot] = key;
+    return true;
+}
+
 function updatePlateReader(data) {
     if (!plateReader) return;
 
@@ -451,21 +502,27 @@ function updatePlateReader(data) {
         plateReader.classList.toggle('visible', !!data.plateReaderVisible || plateAdjustMode);
     }
 
-    if (data.frontPlateStyle !== undefined && plateFrontBg) {
+    const frontDesigned = plateFrontBg && plateFrontText && data.frontPlateDesign !== undefined
+        ? applyPlateDesign('front', data.frontPlateDesign, plateFrontBg, plateFrontText) : !!shownDesign.front;
+    const rearDesigned = plateRearBg && plateRearText && data.rearPlateDesign !== undefined
+        ? applyPlateDesign('rear', data.rearPlateDesign, plateRearBg, plateRearText) : !!shownDesign.rear;
+    if (data.frontPlateStyle !== undefined && plateFrontBg && !frontDesigned) {
         const frontStyle = clampPlateStyle(data.frontPlateStyle);
         plateFrontBg.src = `images/plates/${frontStyle}.png`;
         if (plateFrontText) plateFrontText.style.color = getPlateTextColor(frontStyle);
     }
-    if (data.rearPlateStyle !== undefined && plateRearBg) {
+    if (data.rearPlateStyle !== undefined && plateRearBg && !rearDesigned) {
         const rearStyle = clampPlateStyle(data.rearPlateStyle);
         plateRearBg.src = `images/plates/${rearStyle}.png`;
         if (plateRearText) plateRearText.style.color = getPlateTextColor(rearStyle);
     }
-    if (data.frontPlateText !== undefined && plateFrontText) {
-        setPlateTextFit(plateFrontText, data.frontPlateText);
+    if (data.frontPlateText !== undefined && plateFrontText && plateTextChanged('front', data.frontPlateText, plateFrontText)) {
+        if (frontDesigned) setPlateTextDesign(plateFrontText, data.frontPlateText, plateDesigns[shownDesign.front], plateFrontBg);
+        else setPlateTextFit(plateFrontText, data.frontPlateText);
     }
-    if (data.rearPlateText !== undefined && plateRearText) {
-        setPlateTextFit(plateRearText, data.rearPlateText);
+    if (data.rearPlateText !== undefined && plateRearText && plateTextChanged('rear', data.rearPlateText, plateRearText)) {
+        if (rearDesigned) setPlateTextDesign(plateRearText, data.rearPlateText, plateDesigns[shownDesign.rear], plateRearBg);
+        else setPlateTextFit(plateRearText, data.rearPlateText);
     }
     if (data.frontPlateLocked !== undefined && plateFrontLocked) {
         plateFrontLocked.classList.toggle('active', !!data.frontPlateLocked);
@@ -1070,6 +1127,10 @@ window.addEventListener('message', (event) => {
                 const r = data.remoteDisplay;
                 applyRemotePosition(r.x, r.y, r.width, r.scale || 1);
             }
+            break;
+        case 'plateDesigns':
+            plateDesigns = (data.designs && typeof data.designs === 'object') ? data.designs : {};
+            shownDesign.front = shownDesign.rear = undefined;
             break;
         case 'update':
             updateDisplay(data);
