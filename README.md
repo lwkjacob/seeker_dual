@@ -354,11 +354,62 @@ exports.seeker_dual:GetRadarState()               -- full state table
 exports.seeker_dual:IsRadarActive()               -- powered and transmitting
 exports.seeker_dual:IsRadarDisplayed()            -- radar is on screen
 exports.seeker_dual:CanControlRadar()             -- in a valid vehicle
+exports.seeker_dual:SetPlateDesigns(designs)     -- custom plate artwork for the plate reader (below)
 
 -- Server
 exports.seeker_dual:GetPlayerRadarState(source)   -- {power, frontXmit, rearXmit}
 exports.seeker_dual:IsPlayerRadarActive(source)
 exports.seeker_dual:ClearAlprCache()              -- drop every cached plate lookup
+```
+
+`GetRadarState()` also carries what is locked, in the unit on the display: `frontLockedSpeed`,
+`rearLockedSpeed`, `fastLockedSpeed`, `frontLockedDir` / `rearLockedDir` (`'closing'`, `'away'`
+or nil), `frontPlateLocked` / `rearPlateLocked` and `frontLockedPlate` / `rearLockedPlate`.
+
+## Custom plate designs
+
+A CAD can give the plate reader its own plate artwork, so a plate it has a design for shows on
+that design instead of the stock GTA plate:
+
+```lua
+exports.seeker_dual:SetPlateDesigns({
+    designs = {
+        ['design-id'] = {
+            imageDataUri    = 'data:image/png;base64,...',
+            textColor       = '#1a237e',  -- plate number colour
+            textXPercent    = 50,         -- centre of the number, % from the left
+            textYPercent    = 55,         -- centre of the number, % from the top
+            textSizePercent = 34,         -- number height, % of the plate's height
+        },
+    },
+    byPlate = { RANGY = 'design-id' },     -- plate (spaces ignored) -> design id
+})
+```
+
+Call it again whenever the set changes. The artwork is sent to the display once; each update
+only names the design for the plate on screen, and a plate is only redrawn when that changes.
+
+## Events
+
+When the operator locks a speed or a plate, the client fires `seeker_dual:locked` for other
+resources on the same client - a CAD that fills in a citation, a ticket script, a logger:
+
+```lua
+AddEventHandler('seeker_dual:locked', function(lock)
+    -- lock.kind          'speed' | 'plate'
+    -- lock.antenna       'front' | 'rear'
+    -- lock.speed         locked speed in lock.unit, as the display shows it (nil for a plate lock with no speed held)
+    -- lock.speedMs       the same speed in m/s
+    -- lock.fastSpeed     the frozen FAST window, when FAST LOCK is on
+    -- lock.unit          'mph' | 'kmh'
+    -- lock.direction     'closing' | 'away' | nil (pacing)
+    -- lock.patrolSpeed   your own speed, in lock.unit
+    -- lock.mode          'moving' | 'stationary_closing' | 'stationary_away' | 'stationary_both'
+    -- lock.plate         the plate on that antenna: the locked plate, else the target's
+    -- lock.targetNetId   the target vehicle's network id, when it has one
+    -- lock.targetHeading the target's heading in degrees
+    -- lock.at            GetCloudTimeAsInt() when it locked
+end)
 ```
 
 ---
