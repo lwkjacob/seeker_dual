@@ -473,10 +473,31 @@ end
 --- for a minute ago. Background scanning keeps using the cache; that staleness is the price of
 --- not hammering the CAD with ambient traffic, and it is only acceptable because this path
 --- exists.
+--- provider = 'auto': CDE CAD when its API key convar is set, ImperialCAD when that resource is
+--- running, otherwise none. Worked out per lookup, which is two cheap reads, so a CAD resource
+--- started after this one is still picked up.
+local function activeProvider()
+    if ALPR.provider ~= 'auto' then return providers[ALPR.provider] end
+    if GetConvar('CDE_CAD_API_KEY', '') ~= '' then return providers.cde end
+    local imperial = (Config.imperialCad and Config.imperialCad.resourceName) or 'ImperialCAD'
+    if GetResourceState(imperial) == 'started' then return providers.imperial end
+    return nil
+end
+
+-- Clients skip scanning when nothing would answer, rather than sending a plate a scan pass to
+-- be dropped here. Rechecked on a slow timer for a CAD resource started or stopped later.
+CreateThread(function()
+    while true do
+        local on = activeProvider() ~= nil
+        if GlobalState.seekerAlprActive ~= on then GlobalState.seekerAlprActive = on end
+        Wait(30000)
+    end
+end)
+
 RegisterNetEvent('seeker_dual:runAlpr', function(plate, direction, force)
     local src = source
 
-    local provider = providers[ALPR.provider]
+    local provider = activeProvider()
     if not provider then return end
 
     plate = type(plate) == 'string' and plate:gsub('%s+', ''):upper() or ''

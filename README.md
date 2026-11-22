@@ -354,11 +354,92 @@ exports.seeker_dual:GetRadarState()               -- full state table
 exports.seeker_dual:IsRadarActive()               -- powered and transmitting
 exports.seeker_dual:IsRadarDisplayed()            -- radar is on screen
 exports.seeker_dual:CanControlRadar()             -- in a valid vehicle
+exports.seeker_dual:SetPlateDesigns(designs)     -- custom plate artwork for the plate reader (below)
+exports.seeker_dual:SetAccess(allowed, reason)   -- let another resource decide who may use the radar (below)
+exports.seeker_dual:PowerOn()                    -- power on with the self-test, as PWR does
 
 -- Server
 exports.seeker_dual:GetPlayerRadarState(source)   -- {power, frontXmit, rearXmit}
 exports.seeker_dual:IsPlayerRadarActive(source)
 exports.seeker_dual:ClearAlprCache()              -- drop every cached plate lookup
+```
+
+`GetRadarState()` also carries what is locked, in the unit on the display: `frontLockedSpeed`,
+`rearLockedSpeed`, `fastLockedSpeed`, `frontLockedDir` / `rearLockedDir` (`'closing'`, `'away'`
+or nil), `frontPlateLocked` / `rearPlateLocked` and `frontLockedPlate` / `rearLockedPlate`.
+
+## Auto lock
+
+When the target on the transmitting antenna, front or rear, reaches the lock speed, the radar
+locks it and its plate by itself. It is on by default at 80 (in the radar's speed unit).
+Officers can turn it off or change the speed in `/seeker_settings`, and their choice is saved.
+A target that was just released is not locked again for a few seconds, and the same car is not
+relocked on that antenna until another one has been. Defaults are in `Config.autoLock`.
+
+## Who may use it
+
+By default, anyone in an allowed vehicle class can use the radar. A resource that knows better,
+such as a CAD's duty roster, can take that over:
+
+```lua
+exports.seeker_dual:SetAccess(false, 'The radar is for on-duty officers.')
+exports.seeker_dual:SetAccess(true)
+```
+
+While access is closed, F5, power and the lock keys refuse with that reason, and closing it
+while the radar is on powers it down. `PowerOn()` turns the radar on for the operator, for a
+resource that does that when they enter a patrol car.
+
+## Plate lookups without setup
+
+`Config.alpr.provider = 'auto'` (the default) runs plates through CDE CAD when its
+`CDE_CAD_API_KEY` convar is set, through ImperialCAD when that resource is running, and
+nowhere otherwise. When neither is there, the plate reader does not scan for lookups at all.
+
+## Custom plate designs
+
+A CAD can give the plate reader its own plate artwork, so a plate it has a design for shows on
+that design instead of the stock GTA plate:
+
+```lua
+exports.seeker_dual:SetPlateDesigns({
+    designs = {
+        ['design-id'] = {
+            imageDataUri    = 'data:image/png;base64,...',
+            textColor       = '#1a237e',  -- plate number colour
+            textXPercent    = 50,         -- centre of the number, % from the left
+            textYPercent    = 55,         -- centre of the number, % from the top
+            textSizePercent = 34,         -- number height, % of the plate's height
+        },
+    },
+    byPlate = { RANGY = 'design-id' },     -- plate (spaces ignored) -> design id
+})
+```
+
+Call it again whenever the set changes. The artwork is sent to the display once; each update
+only names the design for the plate on screen, and a plate is only redrawn when that changes.
+
+## Events
+
+When the operator locks a speed or a plate, the client fires `seeker_dual:locked` for other
+resources on the same client - a CAD that fills in a citation, a ticket script, a logger:
+
+```lua
+AddEventHandler('seeker_dual:locked', function(lock)
+    -- lock.kind          'speed' | 'plate'
+    -- lock.antenna       'front' | 'rear'
+    -- lock.speed         locked speed in lock.unit, as the display shows it (nil for a plate lock with no speed held)
+    -- lock.speedMs       the same speed in m/s
+    -- lock.fastSpeed     the frozen FAST window, when FAST LOCK is on
+    -- lock.unit          'mph' | 'kmh'
+    -- lock.direction     'closing' | 'away' | nil (pacing)
+    -- lock.patrolSpeed   your own speed, in lock.unit
+    -- lock.mode          'moving' | 'stationary_closing' | 'stationary_away' | 'stationary_both'
+    -- lock.plate         the plate on that antenna: the locked plate, else the target's
+    -- lock.targetNetId   the target vehicle's network id, when it has one
+    -- lock.targetHeading the target's heading in degrees
+    -- lock.at            GetCloudTimeAsInt() when it locked
+end)
 ```
 
 ---

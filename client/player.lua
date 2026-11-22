@@ -26,8 +26,11 @@ function Player:IsPassenger()
     return self:VehicleStateValid() and self.inPassengerSeat
 end
 
---- Returns if the player can control the radar (driver or passenger, valid class)
+--- Returns if the player can control the radar (driver or passenger, valid class).
+--- A resource that decides who may use the radar (a CAD's duty roster) can close it with
+--- exports.seeker_dual:SetAccess(false, reason); until one does, the vehicle rules alone apply.
 function Player:CanControlRadar()
+    if self.accessDenied then return false end
     return self:IsDriver() or self:IsPassenger()
 end
 
