@@ -371,8 +371,9 @@ or nil), `frontPlateLocked` / `rearPlateLocked` and `frontLockedPlate` / `rearLo
 ## Auto lock
 
 When the target on the transmitting antenna, front or rear, reaches the lock speed, the radar
-locks it and its plate by itself. It is on by default at 80 (in the radar's speed unit).
-Officers can turn it off or change the speed in `/seeker_settings`, and their choice is saved.
+locks it and its plate by itself. The real unit has no auto lock, so it is off by default; set
+`Config.autoLock.enabled = true` to make it on for everyone (lock speed 80 in the radar's speed unit).
+Officers can turn it on or off or change the speed in `/seeker_settings`, and their choice is saved.
 A target that was just released is not locked again for a few seconds, and the same car is not
 relocked on that antenna until another one has been. Defaults are in `Config.autoLock`.
 

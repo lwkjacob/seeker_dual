@@ -17,10 +17,11 @@ Config.speedUnit = 'mph'                -- 'mph' or 'kmh'
 Config.allowedVehicleClasses = { 18 }   -- who can use the radar (18 = emergency)
 
 -- Auto lock. When the target on the transmitting antenna (front or rear) reaches this
--- speed, the radar locks it and its plate by itself, as a real unit's lock speed does.
--- These are first-run defaults; each officer can change them in /seeker_settings.
+-- speed, the radar locks it and its plate by itself. The real unit has no such feature,
+-- so it is off by default. These are first-run defaults; each officer can change them
+-- in /seeker_settings.
 Config.autoLock = {
-    enabled = true,
+    enabled = false,
     speed = 80,                                 -- in the radar's speed unit
     speeds = { 50, 60, 70, 80, 90, 100, 110, 120 }, -- the choices in /seeker_settings
 }
